@@ -1,0 +1,17 @@
+services:
+  yeetnest:
+    build: .
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      SOLANA_RPC_URL: ${SOLANA_RPC_URL:-https://api.mainnet-beta.solana.com}
+      JUPITER_API_KEY: ${JUPITER_API_KEY:-}
+      PINATA_JWT: ${PINATA_JWT:-}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      IPFS_GATEWAY: ${IPFS_GATEWAY:-https://gateway.pinata.cloud/ipfs/}
+    volumes:
+      - yeetnest-data:/app/data
+    restart: unless-stopped
+    stop_grace_period: 20s
+volumes:
+  yeetnest-data:

@@ -1,0 +1,12 @@
+node_modules
+dist
+data
+.env
+.env.*
+.git
+.codex
+.agents
+test-results
+playwright-report
+*.png
+tests
