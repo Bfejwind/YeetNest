@@ -1,4 +1,4 @@
-import { createIcons, icons } from "lucide";
+import { createIcons, icons } from "./ui-icons.js";
 import * as chain from "./chain.js";
 import { createChart, CandlestickSeries } from "lightweight-charts";
 

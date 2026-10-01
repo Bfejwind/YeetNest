@@ -1,4 +1,4 @@
-import { createIcons, icons } from "lucide";
+import { createIcons, icons } from "./ui-icons.js";
 import { createAvatar } from "@dicebear/core";
 import * as bottts from "@dicebear/bottts-neutral";
 import * as chain from "./chain.js";
