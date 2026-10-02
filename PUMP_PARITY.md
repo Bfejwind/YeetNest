@@ -9,6 +9,7 @@ Assessment date: October 2, 2026. This is a public-feature assessment, not a cla
 - Terminal with new-pair, approaching-graduation and graduated columns; filtering and token detail navigation. Its stages use available curve progress, not a protocol-wide indexer.
 - Token leaderboard sorted by loaded volume, capitalization or price change. This is not a trader profitability leaderboard.
 - Browser-local profile and coin discussion with escaped text, deletion and local reports. These are explicitly demo-only, not shared community features or operational moderation.
+- Node backend: signed-wallet shared profiles and comments, owner-only comment deletion, rate-limited writes and private recorded reports. A PostgreSQL adapter and initial migration are implemented; the database has not been provisioned or integration-tested. Without a database URL these use single-process durable JSON. Reports do not have a moderator dashboard or operator service.
 - In the Node-server version: Phantom/Solflare, balance reads, Raydium SOL launch/curve transactions and fee claims, Jupiter swaps, public metadata uploads, pool registration, indexed market candles and wallet history. Real funded acceptance testing remains outstanding.
 
 The published Sites build deliberately does not contain the mainnet SDK or connect to the Node API. Real transactions are not enabled merely because the website is public. The existing launch engine is Raydium, not Pump/PumpSwap.
@@ -19,11 +20,11 @@ You need a continuously hosted backend for shared sign-in, user content, uploads
 
 For a real multi-user launchpad, use PostgreSQL for app-owned data. Solana remains authoritative for token ownership, balances, program state and transaction settlement. Cache/index chain data in the database but never treat an edited database balance as spendable money.
 
-Suggested records: users (internal ID, display name, bio), wallets (unique public key, linked user), challenges (nonce hash, expiry, used-at), sessions (hashed token, expiry, revoked-at), coins (mint, program, creator, metadata URI, pool), upload references, comments, follows, watchlists, reports, moderation actions, streams, fee receipts, trades and indexing checkpoints. Enforce foreign keys, unique constraints, authorization and indexes. Store integer token amounts as decimal strings or sufficiently wide NUMERIC fields; do not use floating-point money. This schema is a recommendation; PostgreSQL integration is not implemented yet.
+Suggested records: users (internal ID, display name, bio), wallets (unique public key, linked user), challenges (nonce hash, expiry, used-at), sessions (hashed token, expiry, revoked-at), coins (mint, program, creator, metadata URI, pool), upload references, comments, follows, watchlists, reports, moderation actions, streams, fee receipts, trades and indexing checkpoints. Enforce foreign keys, unique constraints, authorization and indexes. Store integer token amounts as decimal strings or sufficiently wide NUMERIC fields; do not use floating-point money. Only wallet profiles, comments and reports currently have a PostgreSQL adapter/schema; the remaining entities are still recommendations.
 
 Store images/video in object storage or a metadata provider, not database blobs or ephemeral service folders. Store secrets in hosting environment variables. Never collect wallet seed phrases/private keys. Do not collect real names, addresses, email or other personal data without a product need and appropriate privacy controls. Wallet addresses and activity can still identify people; limit logs, retention and staff access.
 
-The current JSON catalogue with a persistent disk is a single-instance pilot only. It does not provide shared sessions, public profiles/comments, multi-instance writes or an event indexer. Render's default filesystem is ephemeral; an unmounted `data/` folder is not durable.
+The current JSON catalogue with a persistent disk is a single-instance pilot only. Shared profiles/comments are implemented in the Node API, but sessions, catalogue writes and rate limits are not multi-instance safe. An event indexer is still missing. Render's default filesystem is ephemeral; an unmounted `data/` folder is not durable.
 
 ## Concrete Next Steps
 
@@ -39,16 +40,17 @@ The current JSON catalogue with a persistent disk is a single-instance pilot onl
 ### 2. Add PostgreSQL And Migrate Persistence
 
 1. Provision managed PostgreSQL in the backend's region. Add its connection string as a server-only `DATABASE_URL`, with TLS and connection pooling appropriate to the provider.
-2. Implement migrations for the entities above; separate authentication records from public profiles and add uniqueness on wallet keys, mint addresses, signatures and event indices.
-3. Replace filesystem catalogue writes/upload references and in-memory sessions/challenges with parameterized database operations. Use transactions and row locking for multi-step writes; do not just attach a database URL to the current code.
-4. Import existing confirmed catalogue records, verify creator ownership on-chain, and reconcile metadata. Keep a backup of the JSON files during migration.
-5. Test concurrent writes, duplicate/replayed requests, revoked sessions, ownership changes, retention and rollback. Establish encrypted backups, restore drills and least-privilege database roles.
+2. Run `npm run db:migrate` with `DATABASE_URL` configured to install `server/migrations/001-community.sql`. Start the normal Node build and test shared profile/comment persistence with two wallets. No real PostgreSQL instance has been exercised yet. The initial migration is idempotent; future schema changes need new versioned migrations. Existing JSON community data is not imported automatically: back it up and explicitly validate/import it before switching.
+3. Add migrations for the remaining entities above; separate authentication records from public profiles and add uniqueness on wallet keys, mint addresses, signatures and event indices.
+4. Replace filesystem catalogue writes/upload references and in-memory sessions/challenges with parameterized database operations. Use transactions and row locking for multi-step writes; attaching a database URL only switches community storage, not the whole app.
+5. Import existing confirmed catalogue records, verify creator ownership on-chain, and reconcile metadata. Keep a backup of the JSON files during migration.
+6. Test concurrent writes, duplicate/replayed requests, revoked sessions, ownership changes, retention and rollback. Establish encrypted backups, restore drills and least-privilege database roles.
 
 ### 3. Shared Identity, Profiles And Social Features
 
 1. Retain signature-based wallet login with origin/domain-bound expiring nonces, one-time use and explicit sign-in messages. Add Wallet Standard/mobile coverage.
 2. Link each validated public key to a user record; require a second verified signature to link another wallet. Add session revocation and account export/deletion.
-3. Implement authenticated profile, watchlist, follow and discussion endpoints. Authorize each change against the session identity; a typed display name is not proof of identity.
+3. The Node version implements authenticated profiles and discussions with session-derived ownership. Add synced watchlists, follows, account linking and export/deletion. A typed display name is not proof of identity.
 4. Move browser-local demo content only with an explicit user import action. Add server-side text validation, pagination, spam limits, reporting, blocking and moderator roles.
 5. Test with two separate browsers/accounts to confirm actual shared state, privacy and unauthorized edit rejection.
 

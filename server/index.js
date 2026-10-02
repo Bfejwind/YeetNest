@@ -20,7 +20,9 @@ app.use((req, res, next) => {
 });
 app.get('/healthz', (req, res) => res.status(stopping ? 503 : 200).json({ status: stopping ? 'stopping' : 'ok' }));
 app.get('/readyz', (req, res) => res.status(stopping ? 503 : 200).json({ ready: !stopping, scope: 'process-and-storage' }));
-app.use(createApi({ config: { ...process.env, LOCAL_SETUP_ENABLED: 'false' }, storageDir: directory }));
+const api = createApi({ config: { ...process.env, LOCAL_SETUP_ENABLED: 'false' }, storageDir: directory });
+await api.locals.ready();
+app.use(api);
 app.use(express.static('dist'));
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`YeetNest is running at http://localhost:${port}`);
@@ -28,7 +30,10 @@ const server = app.listen(port, '0.0.0.0', () => {
 function shutdown() {
   if (stopping) return;
   stopping = true;
-  server.close(error => { process.exitCode = error ? 1 : 0; });
+  server.close(async error => {
+    try { await api.locals.close(); process.exitCode = error ? 1 : 0; }
+    catch { process.exitCode = 1; }
+  });
   server.closeIdleConnections();
   setTimeout(() => process.exit(1), 15000).unref();
 }

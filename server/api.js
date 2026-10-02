@@ -7,6 +7,8 @@ import { resolve } from "node:path";
 import nacl from "tweetnacl";
 import { PublicKey, Connection, VersionedTransaction } from "@solana/web3.js";
 import { installSetup, readSettings, publicHttps } from "./setup.js";
+import { createCommunityStore } from "./community-store.js";
+import { installCommunity } from "./community.js";
 
 const address = (value) => {
   try {
@@ -50,6 +52,9 @@ export function createApi({
 } = {}) {
   config = { ...config, ...readSettings(storageDir) };
   const app = express();
+  const community = createCommunityStore({ databaseUrl: config.DATABASE_URL, directory: storageDir });
+  app.locals.ready = () => community.ready();
+  app.locals.close = () => community.close();
   const uploadFile = resolve(storageDir, "upload-references.json");
   const challenges = new Map(),
     sessions = new Map(),
@@ -208,6 +213,7 @@ export function createApi({
     next();
   });
   app.use("/api", express.json({ limit: "4mb" }));
+  installCommunity(app, { store: community, auth, address, text, route, fail });
   app.use(
     "/uploads",
     express.static(resolve(storageDir, "public"), {
@@ -242,6 +248,9 @@ export function createApi({
           : "Not configured",
       rpc: config.SOLANA_RPC_URL ? "configured" : "public",
       marketData: ["DexScreener", "GeckoTerminal"],
+      communityStorage: community.kind,
+      community: true,
+      moderationService: false,
     }),
   );
   app.post(

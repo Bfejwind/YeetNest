@@ -14,10 +14,62 @@ async function withApi(fetcher, callback) {
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   const root = `http://127.0.0.1:${server.address().port}`;
-  const request = (path, body, headers = {}) => fetch(root + '/api' + path, body === undefined ? { headers } : { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  const request = (path, body, headers = {}, method = 'POST') => fetch(root + '/api' + path, body === undefined ? { headers } : { method, headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
   try { await callback(request); } finally { await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); }
 }
 const ok = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+
+test('shared community uses signed identity, owner deletion and private reports', async () => {
+  await withApi(async () => ok({}), async request => {
+    const login = async wallet => {
+      const challenge = await (await request('/auth/challenge', { wallet: wallet.publicKey.toBase58() })).json();
+      const signature = Buffer.from(nacl.sign.detached(Buffer.from(challenge.message), wallet.secretKey)).toString('base64');
+      const { token } = await (await request('/auth/verify', { nonce: challenge.nonce, signature })).json();
+      return { Authorization: `Bearer ${token}` };
+    };
+    const owner = Keypair.generate(), stranger = Keypair.generate();
+    const a = await login(owner), b = await login(stranger);
+    const mint = Keypair.generate().publicKey.toBase58();
+    const endpoint = `/community/coins/${mint}/comments`;
+    assert.equal((await request('/community/profile', { name: 'Fake' })).status, 401);
+    const saved = await (await request('/community/profile', { name: 'Creator', bio: 'Hello', wallet: stranger.publicKey.toBase58() }, a)).json();
+    assert.equal(saved.wallet, owner.publicKey.toBase58());
+    assert.equal((await (await request(`/community/profiles/${saved.wallet}`)).json()).name, 'Creator');
+    assert.equal((await request(endpoint, { body: 'No identity' })).status, 401);
+    const post = await (await request(endpoint, { body: '<script>alert(1)</script>' }, a)).json();
+    const posts = await (await request(endpoint)).json();
+    assert.equal(posts[0].body, '<script>alert(1)</script>');
+    assert.equal(posts[0].author, 'Creator');
+    assert.equal((await request(`/community/comments/${post.id}`, {}, b, 'DELETE')).status, 404);
+    assert.equal((await request(`/community/comments/${post.id}/report`, { reason: 'spam' })).status, 401);
+    for (let i = 0; i < 2; i++) {
+      const report = await (await request(`/community/comments/${post.id}/report`, { reason: 'spam' }, b)).json();
+      assert.equal(report.recorded, true);
+      assert.equal(report.moderationService, false);
+    }
+    assert.equal((await request(endpoint, { body: 'x'.repeat(501) }, a)).status, 400);
+    assert.equal((await request('/community/coins/invalid/comments')).status, 400);
+    assert.equal((await request(`/community/comments/${post.id}`, {}, a, 'DELETE')).status, 200);
+    assert.deepEqual(await (await request(endpoint)).json(), []);
+  });
+});
+
+test('community JSON fallback persists and serializes concurrent writes', async () => {
+  const { createCommunityStore } = await import('../server/community-store.js');
+  const directory = await mkdtemp(join(tmpdir(), 'yeetnest-community-'));
+  try {
+    const store = createCommunityStore({ directory });
+    await store.ready();
+    await store.saveProfile('wallet', { name: 'Creator', bio: '' });
+    await Promise.all(Array.from({ length: 20 }, (_, i) => store.addPost('mint', 'wallet', `Comment ${i}`)));
+    await store.close();
+    const reopened = createCommunityStore({ directory });
+    await reopened.ready();
+    assert.equal((await reopened.listPosts('mint')).length, 20);
+    assert.equal((await reopened.getProfile('wallet')).name, 'Creator');
+    await reopened.close();
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 
 test('local setup protects writes, hides secrets and validates provider URLs', async () => {
   await withApi(async () => ok({}), async request => {

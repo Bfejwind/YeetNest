@@ -1,6 +1,6 @@
 # YeetNest
 
-A Solana meme coin launchpad with a light, coral-and-teal visual identity. Demo and live modes are separate: sample coins never become live tokens by connecting a wallet.
+A Solana meme coin launchpad with dark neutral surfaces and Pump-inspired mint-green accents. Demo and live modes are separate: sample coins never become live tokens by connecting a wallet.
 
 ## Run
 
@@ -22,6 +22,7 @@ Set values in the project's `.env`, using `.env.example` as the template, and re
 | `PINATA_JWT` | Required for public IPFS coin artwork and metadata uploads. |
 | `IPFS_GATEWAY` | Public gateway prefix ending in `/ipfs/`. Defaults to Pinata. |
 | `PORT` | Production HTTP port, default 3000. |
+| `DATABASE_URL` | Optional server-only PostgreSQL connection string for shared profiles, comments and reports. Run `npm run db:migrate` before starting. |
 
 Do not add private wallet keys or `VITE_`-prefixed credentials. Phantom and Solflare sign transactions in the browser. Creator uploads use a short-lived, nonce-based wallet signature session.
 
@@ -66,7 +67,16 @@ Full parity cannot be claimed: the reference site was not directly accessible. T
 
 ## Pump.fun Coverage
 
-The current request supersedes the earlier StonkFun comparison. Integrations now displays Pump.fun feature coverage. See [PUMP_PARITY.md](PUMP_PARITY.md) for the detailed unfinished-feature checklist, architecture and Render/PostgreSQL setup steps. Terminal and leaderboard use loaded coin data; profiles/discussions are explicitly browser-local demos. Full Pump protocol integration, shared accounts, livestreaming and production financial workflows are not complete.
+The current request supersedes the earlier StonkFun comparison. Integrations now displays Pump.fun feature coverage. See [PUMP_PARITY.md](PUMP_PARITY.md) for the detailed unfinished-feature checklist, architecture and Render/PostgreSQL setup steps. Terminal and leaderboard use loaded coin data. The static demo has browser-local profiles/discussions; the Node version has signed-wallet shared profile/comment endpoints, owner-only deletion and recorded reports. Reports have no operator moderation service yet. Full Pump protocol integration, social graph, livestreaming and production financial workflows are not complete.
+
+## Community Database Setup
+
+1. Create a managed PostgreSQL database and configure its server-only `DATABASE_URL`. Use the provider's documented TLS settings; never put the URL in a `VITE_` variable or browser code.
+2. Run `npm ci` and `npm run db:migrate` with that URL configured. The initial idempotent migration creates profile, comment and report tables. The server refuses to start with an unavailable/unmigrated configured database.
+3. Run `npm run build` and `npm start`. In live mode connect a wallet, explicitly approve the sign-in message, then save a profile or post on a mint's discussion.
+4. Test with two wallets/browsers, verify unauthorized deletion is rejected and configure backups and retention. The adapter has not been tested against a provisioned PostgreSQL instance on this machine.
+
+Without `DATABASE_URL`, community data uses serialized JSON in `DATA_DIR`, for a single-process pilot only. PostgreSQL currently stores only community profiles/comments/reports; coin catalogue, upload references, auth sessions and rate limits still need migration before multi-instance deployment. There is no automatic import of local demo content or existing JSON community data. Keep a backup and perform a deliberate validated import when switching storage. No private keys or seed phrases are stored.
 
 ## Deployment
 

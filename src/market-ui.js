@@ -62,21 +62,44 @@ export function installMarketUI(context) {
     const mine = profile();
     const address = mode === 'live' ? chain.publicKey?.toBase58() : null;
     content.innerHTML = `<div class="heading"><div><div class="eyebrow">BROWSER-LOCAL PROFILE</div><h1>Your profile</h1></div></div><form class="profile-form"><label>Display name<input name="name" maxlength="24" required value="${esc(mine.name)}"/></label><label>Bio<textarea name="bio" maxlength="240">${esc(mine.bio)}</textarea></label><div class="profile-wallet"><span>Connected wallet</span><code>${esc(address || 'Not connected')}</code></div><p class="form-error" role="alert"></p><button class="primary" type="submit">${icon('save')} Save profile</button></form>`;
-    content.querySelector('form').onsubmit = event => {
+    if (mode === 'live') {
+      content.querySelector('.eyebrow').textContent = 'WALLET PROFILE';
+      if (address) chain.api(`/community/profiles/${address}`).then(saved => {
+        if (!content.isConnected || chain.publicKey?.toBase58() !== address) return;
+        content.querySelector('[name="name"]').value = saved.name;
+        content.querySelector('[name="bio"]').value = saved.bio;
+      }).catch(error => { if (content.isConnected) content.querySelector('.form-error').textContent = error.message; });
+    }
+    content.querySelector('form').onsubmit = async event => {
       event.preventDefault();
       const form = event.currentTarget;
       const data = Object.fromEntries(new FormData(form));
       const name = data.name.trim();
       if (!name) { form.querySelector('.form-error').textContent = 'Enter a display name.'; return; }
-      try { localStorage.setItem('yn-profile', JSON.stringify({ name, bio: data.bio.trim() })); toast('Profile saved in this browser.'); }
-      catch { form.querySelector('.form-error').textContent = 'Browser storage is unavailable.'; }
+      const button = form.querySelector('button');
+      button.disabled = true;
+      form.querySelector('.form-error').textContent = '';
+      try {
+        if (mode === 'live') {
+          await chain.authenticate();
+          await chain.api('/community/profile', { method: 'POST', body: JSON.stringify({ name, bio: data.bio.trim() }) });
+          toast('Profile saved.');
+        } else {
+          localStorage.setItem('yn-profile', JSON.stringify({ name, bio: data.bio.trim() }));
+          toast('Profile saved in this browser.');
+        }
+      } catch(error) { form.querySelector('.form-error').textContent = error.message; }
+      finally { button.disabled = false; }
     };
   }
   createIcons({ icons });
 }
 
 export function mountDiscussion(coin, { mode, esc, toast }) {
-  if (mode !== 'demo') return;
+  if (mode !== 'demo') {
+    if (coin.mint) mountLiveDiscussion(coin, { esc, toast });
+    return;
+  }
   const key = `yn-discussion-${coin.id}`;
   const reportsKey = `yn-reports-${coin.id}`;
   const modal = document.querySelector('.modal');
@@ -109,4 +132,49 @@ export function mountDiscussion(coin, { mode, esc, toast }) {
     } catch(error) { root.querySelector('.form-error').textContent = error.message; }
   };
   show();
+}
+
+function mountLiveDiscussion(coin, { esc, toast }) {
+  const modal = document.querySelector('.modal');
+  modal.insertAdjacentHTML('beforeend', `<section class="discussion"><div class="section-heading"><h2>Discussion</h2></div><div class="discussion-posts"></div><form><label>Comment<textarea name="body" maxlength="500" required></textarea></label><p class="form-error" role="alert"></p><button class="primary" type="submit">${icon('message-square')} Post comment</button></form></section>`);
+  const root = modal.querySelector('.discussion');
+  const errorBox = root.querySelector('.form-error');
+  const endpoint = `/community/coins/${encodeURIComponent(coin.mint)}/comments`;
+  const refresh = async () => {
+    const posts = await chain.api(endpoint);
+    if (!root.isConnected) return;
+    const wallet = chain.publicKey?.toBase58();
+    root.querySelector('.discussion-posts').innerHTML = posts.map(post => `<article class="discussion-post"><div><strong title="${esc(post.wallet)}">${esc(post.author)}</strong><time>${esc(new Date(post.created).toLocaleString())}</time>${post.wallet === wallet ? `<button class="icon-button" data-delete="${esc(post.id)}" title="Delete your comment">${icon('trash-2')}</button>` : ''}</div><p>${esc(post.body)}</p><form data-report="${esc(post.id)}"><select name="reason" aria-label="Report reason"><option value="spam">Spam</option><option value="scam">Scam</option><option value="abuse">Abuse</option></select><button class="icon-button" title="Report comment" type="submit">${icon('flag')}</button></form></article>`).join('') || '<p class="board-empty">No comments yet.</p>';
+    root.querySelectorAll('[data-delete]').forEach(button => button.onclick = () => change(button, async () => {
+      await chain.api(`/community/comments/${button.dataset.delete}`, { method: 'DELETE' });
+      await refresh();
+    }));
+    root.querySelectorAll('[data-report]').forEach(form => form.onsubmit = event => {
+      event.preventDefault();
+      change(form.querySelector('button'), async () => {
+        await chain.api(`/community/comments/${form.dataset.report}/report`, { method: 'POST', body: JSON.stringify({ reason: form.elements.reason.value }) });
+        toast('Report recorded. No moderation service is connected.');
+      });
+    });
+    createIcons({ icons });
+  };
+  const change = async (button, action) => {
+    button.disabled = true;
+    errorBox.textContent = '';
+    try { await chain.authenticate(); await action(); }
+    catch(error) { if (root.isConnected) errorBox.textContent = error.message; }
+    finally { button.disabled = false; }
+  };
+  root.querySelector('form').onsubmit = event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const body = form.elements.body.value.trim();
+    if (!body) return;
+    change(form.querySelector('button'), async () => {
+      await chain.api(endpoint, { method: 'POST', body: JSON.stringify({ body }) });
+      form.reset();
+      await refresh();
+    });
+  };
+  refresh().catch(error => { if (root.isConnected) errorBox.textContent = error.message; });
 }
