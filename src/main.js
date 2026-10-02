@@ -6,6 +6,8 @@ import { fromUnits } from "./amounts.js";
 import { installLaunchpadUI, mountMarket, cleanupMarket } from "./launchpad-ui.js";
 import "./color-theme.css";
 import "./dark-theme.css";
+import "./pump-theme.css";
+import { installMarketUI, mountDiscussion } from "./market-ui.js";
 
 const I = (name) => `<i data-lucide="${name}"></i>`;
 const esc = (value) =>
@@ -271,6 +273,7 @@ function render() {
       refreshLive();
     },
   });
+  installMarketUI({ page, mode, coins: allCoins(), esc, money, image, openCoin: detail, toast, navigate: next => { page = next; render(); } });
   if (chain.hostedDemo) document.querySelector(".content").insertAdjacentHTML("afterbegin", '<div class="notice">Online demo. Launches, artwork and simulated trades stay in this browser. Mainnet trading is not enabled.</div>');
   createIcons({ icons });
 }
@@ -908,6 +911,7 @@ function detail(id) {
     () => {
       if (owns)
         document.querySelector("#edit-art").onclick = () => editArtwork(coin);
+      mountDiscussion(coin, { mode, esc, toast });
       const socialLinks = Object.entries(coin.socials || {}).filter(([, url]) =>
         /^https:\/\//.test(url),
       );

@@ -1,0 +1,27 @@
+# Single-instance pilot using the current JSON catalogue, not the future Postgres architecture.
+services:
+  - type: web
+    name: yeetnest
+    runtime: node
+    plan: 0.5c-512mb
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /readyz
+    numInstances: 1
+    disk:
+      name: yeetnest-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data
+      - key: SOLANA_RPC_URL
+        value: https://api.mainnet-beta.solana.com
+      - key: JUPITER_API_KEY
+        sync: false
+      - key: PINATA_JWT
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false

@@ -64,6 +64,10 @@ The vulnerable native `bigint-buffer` dependency is replaced by a tested, bounde
 
 Full parity cannot be claimed: the reference site was not directly accessible. The in-app Integrations table and [FEATURE_PARITY.md](FEATURE_PARITY.md) track the known differences and the sources used.
 
+## Pump.fun Coverage
+
+The current request supersedes the earlier StonkFun comparison. Integrations now displays Pump.fun feature coverage. See [PUMP_PARITY.md](PUMP_PARITY.md) for the detailed unfinished-feature checklist, architecture and Render/PostgreSQL setup steps. Terminal and leaderboard use loaded coin data; profiles/discussions are explicitly browser-local demos. Full Pump protocol integration, shared accounts, livestreaming and production financial workflows are not complete.
+
 ## Deployment
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for Node hosting, Docker Compose, persistent storage, HTTPS, health checks, and the remaining acceptance checklist. The production server validates writable `DATA_DIR`, exposes `/healthz` and `/readyz`, sets baseline response security headers, and drains requests on shutdown. Container execution has not been verified on this machine because Docker is unavailable.

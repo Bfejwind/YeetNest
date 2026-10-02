@@ -1,0 +1,15 @@
+export const pumpFeatures = [
+  ['Discovery, search and watchlists', 'Partial', 'Demo and Jupiter discovery; launch indexer and synced watchlists pending.'],
+  ['Creation and uploaded artwork', 'Partial', 'Raydium SOL launch code; public site is demo-only. Pump integration and funded tests pending.'],
+  ['Trading, curves and graduation', 'Partial', 'Raydium/Jupiter, not Pump/PumpSwap; event indexing and migration tests pending.'],
+  ['Terminal and token leaderboard', 'Partial', 'Loaded-coin board and rankings; global trader P&L and tick streaming pending.'],
+  ['Profiles and discussions', 'Demo only', 'Browser-local profile, comments and reports; shared authentication, database and moderation pending.'],
+  ['Creator fees', 'Partial', 'Raydium claims; Pump sharing, fee-owner changes and revenue history pending.'],
+  ['Holder rewards', 'Not implemented', 'Current holder-reward contract mode, eligibility, payouts and receipts required.'],
+  ['SOL and USDC launches', 'Partial', 'SOL live code only; quote-specific configs and decimal-safe USDC execution required.'],
+  ['Livestreams and chat', 'Not implemented', 'Video provider, signed keys, realtime chat and human moderation required.'],
+  ['GO, Mayhem and advanced orders', 'Not implemented', 'Separate specifications, protocol integration, permissions and execution services required.'],
+  ['Mobile app and onboarding', 'Partial', 'Responsive website; Wallet Standard, mobile links and native/embedded onboarding pending.'],
+  ['Shared accounts and social graph', 'Not implemented', 'Postgres, signature sign-in, account lifecycle, follows and abuse controls required.'],
+  ['Production operations', 'Partial', 'Public static demo; backend, shared storage, indexer, monitoring and security acceptance required.'],
+];
