@@ -4,6 +4,22 @@ import { StandardWalletAdapter } from '@solana/wallet-standard-wallet-adapter-ba
 const wallets = getWallets();
 const supported = new Set(['Phantom', 'Solflare', 'Solflare Web']);
 
+export async function requestWalletConnection(candidate, name, timeoutMs = 30000) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(() => candidate.connect()),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(Object.assign(new Error(`${name} did not finish connecting within 30 seconds. Open its extension, unlock it and approve or close any pending connection request. Then try again; reload this tab if the wallet still reports a pending request.`), { code: 'WALLET_CONNECTION_TIMEOUT' })), timeoutMs);
+      }),
+    ]);
+  } catch(error) {
+    if (error?.code === 4001) throw new Error('Wallet connection was rejected. You can try again when ready.');
+    if (error?.code === -32002) throw new Error(`${name} already has a pending request. Open its extension and approve or close that request before trying again.`);
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+
 function injected(name) {
   const candidates = name === 'Phantom'
     ? [window.phantom?.solana, window.solana?.isPhantom && window.solana]

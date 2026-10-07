@@ -7,7 +7,7 @@ import {
 } from "@solana/web3.js";
 import { fromUnits, toUnits, minimumOutput } from "./amounts.js";
 import BN from "bn.js";
-import { findWalletProvider } from "./wallet-provider.js";
+import { findWalletProvider, requestWalletConnection } from "./wallet-provider.js";
 import bs58 from 'bs58';
 import { pollTransaction, recordTransaction, readTransactions, TransactionOutcomeError } from './transaction-state.js';
 import { validateCurveInstruction } from './transaction-validation.js';
@@ -23,6 +23,8 @@ export const connection = new Connection(`${location.origin}/api/rpc`, {
 export let provider = null;
 export let publicKey = null;
 let session = null;
+let connecting = false;
+let connectionAttempt = 0;
 
 export async function api(path, options = {}) {
   if (hostedDemo) {
@@ -46,23 +48,30 @@ export async function api(path, options = {}) {
 
 export async function connectWallet(name) {
   if (hostedDemo) throw new Error("Mainnet wallet connections are unavailable in the online demo.");
-  const candidate = await findWalletProvider(name);
+  if (connecting) throw new Error('A wallet connection request is already in progress. Finish or close it first.');
+  connecting = true;
+  const attempt = ++connectionAttempt;
+  let candidate;
   try {
-    const result = await candidate.connect();
+    candidate = await findWalletProvider(name);
+    if (attempt !== connectionAttempt) throw new Error('Wallet connection was cancelled.');
+    const result = await requestWalletConnection(candidate, name);
+    if (attempt !== connectionAttempt) throw new Error('Wallet connection was cancelled.');
     const key = result?.publicKey || candidate.publicKey;
     if (!key) throw new Error("Wallet did not return a public address.");
     const connectedKey = new PublicKey(key.toString());
     provider = candidate;
     publicKey = connectedKey;
   } catch(error) {
-    candidate.destroy?.();
+    candidate?.destroy?.();
     throw error;
-  }
+  } finally { connecting = false; }
   session = null;
   return publicKey.toBase58();
 }
 
 export async function disconnectWallet() {
+  connectionAttempt++;
   const old = provider;
   provider = null;
   publicKey = null;

@@ -704,11 +704,15 @@ function walletModal() {
       document.querySelectorAll("[data-wallet]").forEach(
         (b) =>
           (b.onclick = async () => {
-            b.disabled = true;
+            const originalLabel = b.innerHTML;
+            const walletButtons = [...document.querySelectorAll('[data-wallet]')];
+            walletButtons.forEach(button => { button.disabled = true; });
+            b.textContent = `Waiting for ${b.dataset.wallet}...`;
             document.querySelector('#wallet-help')?.remove();
             document.querySelector('#form-error').textContent = '';
             try {
               await chain.connectWallet(b.dataset.wallet);
+              if (!b.isConnected) { await chain.disconnectWallet(); return; }
               watchlist = [];
               walletEpoch++;
               const provider = chain.provider;
@@ -748,7 +752,9 @@ function walletModal() {
                 link.textContent = `Get ${e.wallet}`;
                 document.querySelector('#form-error').after(link);
               }
-              b.disabled = false;
+            } finally {
+              if (b.isConnected) b.innerHTML = originalLabel;
+              walletButtons.forEach(button => { if (button.isConnected) button.disabled = false; });
             }
           }),
       );

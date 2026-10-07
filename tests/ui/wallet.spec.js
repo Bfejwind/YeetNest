@@ -7,6 +7,63 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: 'wait' });
 });
 
+test('stalled Phantom connection times out, ignores late approval and allows retry', async ({ page }) => {
+  const address = Keypair.generate().publicKey.toBase58();
+  await page.addInitScript(address => {
+    let calls = 0;
+    window.phantom = { solana: {
+      connect: () => {
+        calls++;
+        if (calls === 1) return new Promise(resolve => { window.__latePhantomApproval = () => resolve({ publicKey: { toString: () => address } }); });
+        return Promise.reject(Object.assign(new Error('Rejected'), { code: calls === 2 ? 4001 : -32002 }));
+      },
+    } };
+  }, address);
+  await page.route('**/api/tokens*', route => route.fulfill({ json: [] }));
+  await page.clock.install();
+  await page.goto('/');
+  await page.locator('[data-mode="live"]').click();
+  await page.locator('#wallet').click();
+  const phantom = page.locator('[data-wallet="Phantom"]');
+  await phantom.click();
+  await expect(phantom).toHaveText('Waiting for Phantom...');
+  await expect(page.locator('[data-wallet="Solflare"]')).toBeDisabled();
+  await expect.poll(() => page.evaluate(() => typeof window.__latePhantomApproval)).toBe('function');
+  await page.clock.fastForward(31000);
+  await expect(page.locator('#form-error')).toContainText('within 30 seconds');
+  await expect(phantom).toBeEnabled();
+  await expect(page.locator('[data-wallet="Solflare"]')).toBeEnabled();
+  await page.evaluate(() => window.__latePhantomApproval());
+  expect(await page.evaluate(async () => (await import('/src/chain.js')).publicKey)).toBeNull();
+  await phantom.click();
+  await expect(page.locator('#form-error')).toContainText('rejected');
+  await expect(phantom).toBeEnabled();
+  await phantom.click();
+  await expect(page.locator('#form-error')).toContainText('already has a pending request');
+  await expect(phantom).toBeEnabled();
+});
+
+test('concurrent wallet connection requests are rejected before another prompt opens', async ({ page }) => {
+  const address = Keypair.generate().publicKey.toBase58();
+  await page.goto('/');
+  const result = await page.evaluate(async address => {
+    const chain = await import('/src/chain.js');
+    let resolveConnection, prompts = 0;
+    window.phantom = { solana: { connect: () => { prompts++; return new Promise(resolve => { resolveConnection = resolve; }); } } };
+    const first = chain.connectWallet('Phantom');
+    while (!resolveConnection) await new Promise(resolve => setTimeout(resolve, 0));
+    let error;
+    try { await chain.connectWallet('Phantom'); } catch(value) { error = value.message; }
+    resolveConnection({ publicKey: { toString: () => address } });
+    const connected = await first;
+    await chain.disconnectWallet();
+    return { prompts, error, connected };
+  }, address);
+  expect(result.prompts).toBe(1);
+  expect(result.error).toContain('already in progress');
+  expect(result.connected).toBe(address);
+});
+
 test('extension-free web wallet loads the official Solflare connection surface', async ({ page }) => {
   await page.route('https://connect.solflare.com/**', route => route.fulfill({ contentType: 'text/html', body: '<html><body>Controlled provider page</body></html>' }));
   await page.route('**/api/tokens*', route => route.fulfill({ json: [] }));

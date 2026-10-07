@@ -83,7 +83,7 @@ Jupiter API reference: [Order and execute](https://github.com/jup-ag/docs/blob/m
 | Check | Actual result |
 | --- | --- |
 | `npm test` | 19 passing backend/unit tests; integer math, auth replay, unauthorized actions, decoded PNG/malformed upload checks, controlled metadata persistence, reviewed message/signature, concurrency, confirmation states and instruction tampering |
-| `npm run test:ui` | 12 passing controlled browser tests; desktop/mobile, actual chart pixels, demo creation/artwork/trading, wallet discovery/handoff, shared API flows and failure display |
+| `npm run test:ui` | 14 passing controlled browser tests; desktop/mobile, actual chart pixels, demo creation/artwork/trading, wallet discovery/handoff, shared API flows, stalled connection timeout/retry, late-approval isolation and duplicate connection prevention |
 | Real PostgreSQL integration | 2 passing tests; concurrent app writes/reopen, profile/comment persistence/reopen, unauthorized deletion; isolated fixtures cleaned up |
 | `npm run db:migrate` | Passed against configured database; additive community/application tables |
 | `npm run build` | Passed; large SDK chunk warning remains |
