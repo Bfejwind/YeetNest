@@ -9,6 +9,8 @@ import { PublicKey, Connection, VersionedTransaction } from "@solana/web3.js";
 import { installSetup, readSettings, publicHttps } from "./setup.js";
 import { createCommunityStore } from "./community-store.js";
 import { installCommunity } from "./community.js";
+import { createAppStore } from './app-store.js';
+import { PNG } from 'pngjs';
 
 const address = (value) => {
   try {
@@ -50,19 +52,19 @@ export function createApi({
   config = process.env,
   storageDir = resolve(process.env.DATA_DIR || "data"),
 } = {}) {
-  config = { ...config, ...readSettings(storageDir) };
+  config = config.LOCAL_SETUP_ENABLED === 'false' ? { ...config } : { ...config, ...readSettings(storageDir) };
   const app = express();
+  const proxyHops = Number(config.TRUST_PROXY_HOPS || 0);
+  if (!Number.isInteger(proxyHops) || proxyHops < 0 || proxyHops > 2) throw new Error('TRUST_PROXY_HOPS must be 0, 1 or 2.');
+  app.set('trust proxy', proxyHops);
   const community = createCommunityStore({ databaseUrl: config.DATABASE_URL, directory: storageDir });
-  app.locals.ready = () => community.ready();
-  app.locals.close = () => community.close();
-  const uploadFile = resolve(storageDir, "upload-references.json");
+  const persisted = createAppStore({ databaseUrl: config.DATABASE_URL, directory: storageDir });
+  app.locals.ready = () => Promise.all([community.ready(), persisted.ready()]);
+  app.locals.close = () => Promise.all([community.close(), persisted.close()]);
   const challenges = new Map(),
     sessions = new Map(),
     orders = new Map(),
     limits = new Map();
-  const uploads = new Map(
-    existsSync(uploadFile) ? JSON.parse(readFileSync(uploadFile, "utf8")) : [],
-  );
   const uploadLimits = new Map(),
     marketCache = new Map();
   const images = new Map();
@@ -96,30 +98,11 @@ export function createApi({
     config.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
     "confirmed",
   );
-  const store = resolve(storageDir, "coins.json");
-  let writing = Promise.resolve();
   const route = (handler) => (req, res, next) =>
     Promise.resolve(handler(req, res)).catch(next);
-  async function records() {
-    try {
-      return JSON.parse(await readFile(store, "utf8"));
-    } catch (error) {
-      if (error.code === "ENOENT") return [];
-      throw error;
-    }
-  }
-  function mutate(fn) {
-    const task = writing.then(async () => {
-      const coins = await records();
-      const result = await fn(coins);
-      await mkdir(storageDir, { recursive: true });
-      await writeFile(`${store}.tmp`, JSON.stringify(coins, null, 2));
-      await rename(`${store}.tmp`, store);
-      return result;
-    });
-    writing = task.catch(() => {});
-    return task;
-  }
+  const records = () => persisted.get('coins');
+  const mutate = fn => persisted.mutate('coins', fn);
+  const metadataFor = async (wallet, uri) => (await persisted.get('upload-references')).find(([key]) => key === `${wallet}:${uri}`)?.[1];
   async function upstream(url, options = {}) {
     let response;
     try {
@@ -194,7 +177,7 @@ export function createApi({
         .status(403)
         .json({ error: "Cross-origin API requests are not allowed." });
     const now = Date.now();
-    for (const map of [challenges, sessions, orders, uploads, uploadLimits])
+    for (const map of [challenges, sessions, orders, uploadLimits])
       for (const [key, value] of map) if (value.expires < now) map.delete(key);
     for (const [key, value] of limits)
       if (value.reset < now) limits.delete(key);
@@ -202,7 +185,7 @@ export function createApi({
       return res
         .status(503)
         .json({ error: "Server is busy. Try again shortly." });
-    const key = req.socket.remoteAddress;
+    const key = req.ip;
     const rate = limits.get(key) || { count: 0, reset: now + 60000 };
     limits.set(key, rate);
     if (++rate.count > 180)
@@ -214,6 +197,14 @@ export function createApi({
   });
   app.use("/api", express.json({ limit: "4mb" }));
   installCommunity(app, { store: community, auth, address, text, route, fail });
+  app.get('/api/watchlist', route(async (req, res) => res.json(await persisted.get(`watchlist:${auth(req)}`))));
+  app.put('/api/watchlist', route(async (req, res) => {
+    const wallet = auth(req);
+    if (!Array.isArray(req.body.mints) || req.body.mints.length > 200) throw fail('Watchlist must contain at most 200 mints.');
+    const mints = [...new Set(req.body.mints.map(address))];
+    await persisted.mutate(`watchlist:${wallet}`, values => { values.splice(0, values.length, ...mints); });
+    res.json(mints);
+  }));
   app.use(
     "/uploads",
     express.static(resolve(storageDir, "public"), {
@@ -227,6 +218,7 @@ export function createApi({
     config,
     directory: storageDir,
     upstream,
+    checkStorage: () => app.locals.ready(),
     onSave: () => {
       connection = new Connection(
         config.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
@@ -249,6 +241,7 @@ export function createApi({
       rpc: config.SOLANA_RPC_URL ? "configured" : "public",
       marketData: ["DexScreener", "GeckoTerminal"],
       communityStorage: community.kind,
+      catalogueStorage: persisted.kind,
       community: true,
       moderationService: false,
     }),
@@ -368,8 +361,9 @@ export function createApi({
     route(async (req, res) => {
       const wallet = address(req.body.wallet);
       const nonce = randomBytes(24).toString("hex");
-      const message = `YeetNest creator sign-in\nWallet: ${wallet}\nNonce: ${nonce}\nExpires: ${new Date(Date.now() + 300000).toISOString()}\nThis is a sign-in message, not a transaction.`;
-      challenges.set(nonce, { wallet, message, expires: Date.now() + 300000 });
+      const domain = text(req.headers.host || '', 255);
+      const message = `YeetNest creator sign-in\nDomain: ${domain}\nWallet: ${wallet}\nNonce: ${nonce}\nExpires: ${new Date(Date.now() + 300000).toISOString()}\nThis is a sign-in message, not a transaction.`;
+      challenges.set(nonce, { wallet, message, domain, expires: Date.now() + 300000 });
       res.json({ nonce, message });
     }),
   );
@@ -378,7 +372,7 @@ export function createApi({
     route(async (req, res) => {
       const challenge = challenges.get(req.body.nonce);
       challenges.delete(req.body.nonce);
-      if (!challenge || challenge.expires < Date.now())
+      if (!challenge || challenge.expires < Date.now() || challenge.domain !== req.headers.host)
         throw fail("Sign-in challenge expired.", 401);
       const signature = Buffer.from(String(req.body.signature), "base64");
       if (
@@ -419,15 +413,19 @@ export function createApi({
       const imageData = String(req.body.image || "");
       if (!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(imageData))
         throw fail("Upload a PNG image.");
-      const bytes = Buffer.from(imageData.split(",")[1], "base64");
+      let bytes = Buffer.from(imageData.split(",")[1], "base64");
       if (
         bytes.length > 2 * 1024 * 1024 ||
         bytes.length < 24 ||
         bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a" ||
-        bytes.readUInt32BE(16) > 4096 ||
-        bytes.readUInt32BE(20) > 4096
+        bytes.subarray(12, 16).toString() !== 'IHDR' ||
+        bytes.readUInt32BE(16) < 1 || bytes.readUInt32BE(20) < 1 ||
+        bytes.readUInt32BE(16) > 512 ||
+        bytes.readUInt32BE(20) > 512
       )
-        throw fail("Image must be a valid PNG under 2 MB and 4096 pixels.");
+        throw fail("Image must be a valid PNG under 2 MB and 512 pixels.");
+      try { bytes = PNG.sync.write(PNG.sync.read(bytes, { checkCRC: true })); }
+      catch { throw fail('Image could not be decoded as a valid PNG.'); }
       const socials = {};
       for (const key of ["website", "twitter", "telegram"])
         if (req.body[key]) {
@@ -459,7 +457,8 @@ export function createApi({
         `${symbol}.json`,
         "application/json",
       );
-      uploads.set(`${wallet}:${uri}`, {
+      const reference = {
+        uri,
         wallet,
         name,
         ticker: symbol,
@@ -467,14 +466,13 @@ export function createApi({
         image,
         socials,
         expires: Date.now() + 31536000000,
+      };
+      await persisted.mutate('upload-references', entries => {
+        const key = `${wallet}:${uri}`;
+        const prior = entries.findIndex(([id]) => id === key);
+        if (prior >= 0) entries[prior] = [key, reference];
+        else entries.push([key, reference]);
       });
-      const persistUploads = writing.then(async () => {
-        await mkdir(storageDir, { recursive: true });
-        await writeFile(`${uploadFile}.tmp`, JSON.stringify([...uploads]));
-        await rename(`${uploadFile}.tmp`, uploadFile);
-      });
-      writing = persistUploads.catch(() => {});
-      await persistUploads;
       res.json({ uri, image });
     }),
   );
@@ -484,7 +482,7 @@ export function createApi({
       const creator = auth(req),
         mint = address(req.body.mint),
         poolId = address(req.body.poolId);
-      const metadata = uploads.get(`${creator}:${req.body.uri}`);
+      const metadata = await metadataFor(creator, req.body.uri);
       if (!metadata || metadata.wallet !== creator)
         throw fail("Upload metadata with this creator wallet first.");
       // Trust chain ownership, rather than a client-supplied creator field.
@@ -532,7 +530,7 @@ export function createApi({
     route(async (req, res) => {
       const creator = auth(req),
         mint = address(req.params.mint),
-        metadata = uploads.get(`${creator}:${req.body.uri}`);
+        metadata = await metadataFor(creator, req.body.uri);
       if (!metadata || metadata.wallet !== creator)
         throw fail("Upload the new artwork with your creator wallet first.");
       const result = await mutate((coins) => {
@@ -594,19 +592,36 @@ export function createApi({
       res.json(data);
     }),
   );
+  app.get('/api/holders/:mint', route(async (req, res) => {
+    const mint = new PublicKey(address(req.params.mint));
+    const [largest, supply] = await Promise.all([connection.getTokenLargestAccounts(mint), connection.getTokenSupply(mint)]);
+    res.json({ accounts: largest.value.map(value => ({ address: value.address.toBase58(), amount: value.amount, decimals: value.decimals })), supply: supply.value.amount, slot: largest.context.slot, updatedAt: Date.now(), scope: 'largest-token-accounts-not-unique-holders' });
+  }));
+  app.get('/api/trades/:mint', route(async (req, res) => {
+    const mint = address(req.params.mint);
+    const pairs = await upstream(`https://api.dexscreener.com/token-pairs/v1/solana/${mint}`);
+    const pair = Array.isArray(pairs) ? pairs.filter(p => p.chainId === 'solana' && p.baseToken?.address === mint).sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0] : null;
+    if (!pair) return res.json({ trades: [], unavailable: 'No indexed pool.', updatedAt: Date.now() });
+    const data = await upstream(`https://api.geckoterminal.com/api/v2/networks/solana/pools/${address(pair.pairAddress)}/trades`, { headers: { Accept: 'application/json;version=20230302' } });
+    res.json({ trades: (data.data || []).slice(0, 20).map(row => row.attributes), source: 'GeckoTerminal', updatedAt: Date.now() });
+  }));
   let indexed = { coins: [], expires: 0 };
   app.get(
     "/api/launches",
     route(async (req, res) => {
       const coins = await records();
       if (!coins.length) return res.json([]);
-      if (indexed.expires > Date.now() && indexed.coins.length === coins.length)
+      const offset = Number(req.query.offset || 0), limit = Number(req.query.limit || 100);
+      if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw fail('Invalid discovery page.');
+      const key = `${offset}:${limit}:${coins.length}`;
+      if (indexed.expires > Date.now() && indexed.key === key)
         return res.json(indexed.coins);
+      const selected = coins.slice(offset, offset + limit);
       const sdk = await import("@raydium-io/raydium-sdk-v2");
       const accounts = await connection.getMultipleAccountsInfo(
-        coins.slice(0, 100).map((c) => new PublicKey(c.poolId)),
+        selected.map((c) => new PublicKey(c.poolId)),
       );
-      const updated = coins.map((coin, i) => {
+      const updated = selected.map((coin, i) => {
         if (!accounts[i]?.owner.equals(sdk.LAUNCHPAD_PROGRAM)) return coin;
         const pool = sdk.LaunchpadPool.decode(accounts[i].data);
         const target = Number(pool.totalFundRaisingB.toString());
@@ -623,7 +638,7 @@ export function createApi({
           updatedAt: Date.now(),
         };
       });
-      indexed = { coins: updated, expires: Date.now() + 30000 };
+      indexed = { key, coins: updated, expires: Date.now() + 30000 };
       res.json(updated);
     }),
   );
@@ -634,6 +649,8 @@ export function createApi({
         outputMint = address(req.query.outputMint),
         taker = address(req.query.taker);
       const amount = String(req.query.amount);
+      const slippageBps = Number(req.query.slippageBps || 100);
+      if (!Number.isInteger(slippageBps) || slippageBps < 1 || slippageBps > 500) throw fail('Slippage must be between 0.01% and 5%.');
       if (
         !/^\d{1,20}$/.test(amount) ||
         BigInt(amount) <= 0n ||
@@ -642,7 +659,7 @@ export function createApi({
       )
         throw fail("Invalid swap amount or pair.");
       const order = await jupiter(
-        `/swap/v2/order?${new URLSearchParams({ inputMint, outputMint, amount, taker })}`,
+        `/swap/v2/order?${new URLSearchParams({ inputMint, outputMint, amount, taker, slippageBps })}`,
       );
       if (!order.transaction || !order.requestId)
         throw fail(

@@ -1,4 +1,4 @@
-# Single-instance pilot using the current JSON catalogue, not the future Postgres architecture.
+# Single-instance pilot; configure PostgreSQL and Pinata. Disk also supports self-hosted media.
 services:
   - type: web
     name: yeetnest
@@ -6,6 +6,7 @@ services:
     plan: 0.5c-512mb
     buildCommand: npm ci && npm run build
     startCommand: npm start
+    preDeployCommand: npm run db:migrate
     healthCheckPath: /readyz
     numInstances: 1
     disk:
@@ -17,6 +18,10 @@ services:
         value: production
       - key: DATA_DIR
         value: /var/data
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: DATABASE_URL
+        sync: false
       - key: SOLANA_RPC_URL
         value: https://api.mainnet-beta.solana.com
       - key: JUPITER_API_KEY

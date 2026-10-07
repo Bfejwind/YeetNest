@@ -5,8 +5,12 @@ import {
   VersionedTransaction,
   Keypair,
 } from "@solana/web3.js";
-import { fromUnits, toUnits } from "./amounts.js";
+import { fromUnits, toUnits, minimumOutput } from "./amounts.js";
 import BN from "bn.js";
+import { findWalletProvider } from "./wallet-provider.js";
+import bs58 from 'bs58';
+import { pollTransaction, recordTransaction, readTransactions, TransactionOutcomeError } from './transaction-state.js';
+import { validateCurveInstruction } from './transaction-validation.js';
 
 globalThis.Buffer ||= Buffer;
 export const hostedDemo = import.meta.env.MODE === "hosted";
@@ -42,17 +46,18 @@ export async function api(path, options = {}) {
 
 export async function connectWallet(name) {
   if (hostedDemo) throw new Error("Mainnet wallet connections are unavailable in the online demo.");
-  const candidate =
-    name === "Phantom"
-      ? window.phantom?.solana ||
-        (window.solana?.isPhantom ? window.solana : null)
-      : window.solflare;
-  if (!candidate) throw new Error(`${name} is not installed in this browser.`);
-  const result = await candidate.connect();
-  const key = result?.publicKey || candidate.publicKey;
-  if (!key) throw new Error("Wallet did not return a public address.");
-  provider = candidate;
-  publicKey = new PublicKey(key.toString());
+  const candidate = await findWalletProvider(name);
+  try {
+    const result = await candidate.connect();
+    const key = result?.publicKey || candidate.publicKey;
+    if (!key) throw new Error("Wallet did not return a public address.");
+    const connectedKey = new PublicKey(key.toString());
+    provider = candidate;
+    publicKey = connectedKey;
+  } catch(error) {
+    candidate.destroy?.();
+    throw error;
+  }
   session = null;
   return publicKey.toBase58();
 }
@@ -62,7 +67,8 @@ export async function disconnectWallet() {
   provider = null;
   publicKey = null;
   session = null;
-  await old?.disconnect();
+  try { await old?.disconnect?.(); }
+  finally { old?.destroy?.(); }
 }
 
 export async function authenticate() {
@@ -120,49 +126,58 @@ async function assertMainnet() {
     throw new Error("The configured RPC is not Solana mainnet.");
 }
 
-export async function submitAndConfirm(transaction) {
+export async function submitAndConfirm(transaction, context = {}) {
+  await assertMainnet();
+  const owner = publicKey.toBase58();
+  const signer = provider;
   const original = Buffer.from(transaction.message.serialize());
-  const signed = await provider.signTransaction(transaction);
+  const signed = await signer.signTransaction(transaction);
+  if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during signing.');
   if (!Buffer.from(signed.message.serialize()).equals(original))
     throw new Error("Wallet changed the transaction message.");
-  const signature = await connection.sendRawTransaction(signed.serialize(), {
-    skipPreflight: false,
-    maxRetries: 3,
-  });
-  // HTTP polling works with private RPC credentials kept behind our server proxy.
-  for (let attempt = 0; attempt < 45; attempt++) {
-    try {
-      const response = await connection.getSignatureStatuses([signature], {
-        searchTransactionHistory: true,
-      });
-      const status = response.value[0];
-      if (status?.err)
-        throw new Error(
-          `Transaction ${signature} failed: ${JSON.stringify(status.err)}`,
-        );
-      if (
-        status &&
-        ["confirmed", "finalized"].includes(status.confirmationStatus)
-      )
-        return signature;
-    } catch (error) {
-      if (error.message.startsWith("Transaction ")) throw error;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+  const signature = bs58.encode(signed.signatures[0]);
+  const existing = readTransactions().find(row => row.signature === signature);
+  if (existing) throw new TransactionOutcomeError(signature, existing.state, 'This signed transaction was already attempted.');
+  recordTransaction({ ...context, signature, wallet: owner, state: 'submitted', network: 'mainnet-beta' });
+  try {
+    const returned = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 });
+    if (returned !== signature) throw new Error('RPC returned an unexpected signature.');
+  } catch {
+    recordTransaction({ signature, state: 'unknown' });
+    throw new TransactionOutcomeError(signature, 'unknown', 'Broadcast outcome is unknown.');
   }
-  throw new Error(
-    `Confirmation timed out for ${signature}. Check Solscan before retrying; the transaction may still land.`,
-  );
+  return pollTransaction(connection, signature, { onState: state => recordTransaction({ signature, state }) });
 }
 
-export async function prepareSwap(coin, side, amount) {
+export async function recoverTransactions() {
   await assertMainnet();
+  const records = readTransactions().filter(row => row.wallet === publicKey.toBase58()).slice(0, 20);
+  if (!records.length) return [];
+  const { value } = await connection.getSignatureStatuses(records.map(row => row.signature), { searchTransactionHistory: true });
+  records.forEach((row, i) => {
+    const status = value[i];
+    recordTransaction({ signature: row.signature, state: status?.err ? 'failed' : status?.confirmationStatus || (row.state === 'confirmed' || row.state === 'finalized' ? row.state : 'unknown') });
+  });
+  return readTransactions().filter(row => row.wallet === publicKey.toBase58()).slice(0, 20);
+}
+
+export async function prepareSwap(coin, side, amount, slippageBps = 100) {
+  await assertMainnet();
+  const { value: mint } = await connection.getParsedAccountInfo(new PublicKey(coin.mint));
+  if (!mint || !['TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'].includes(mint.owner.toBase58()) || mint.data?.parsed?.type !== 'mint') throw new Error('Token mint could not be verified on-chain.');
+  coin = { ...coin, decimals: mint.data.parsed.info.decimals };
   const taker = publicKey.toBase58();
   const inputMint = side === "Buy" ? SOL : coin.mint;
   const outputMint = side === "Buy" ? coin.mint : SOL;
   const units = toUnits(amount, side === "Buy" ? 9 : coin.decimals);
+  if (side === 'Buy' && BigInt(units) >= BigInt(await connection.getBalance(publicKey))) throw new Error('Insufficient SOL; leave enough for network fees and rent.');
+  if (side === 'Sell') {
+    const holdings = await balances();
+    if (BigInt(holdings.tokens.find(token => token.mint === coin.mint)?.amount || '0') < BigInt(units)) throw new Error('Insufficient token balance.');
+  }
+  minimumOutput('1', slippageBps);
   const order = await api(
-    `/swap/order?${new URLSearchParams({ inputMint, outputMint, amount: units, taker })}`,
+    `/swap/order?${new URLSearchParams({ inputMint, outputMint, amount: units, taker, slippageBps })}`,
   );
   const tx = VersionedTransaction.deserialize(
     Buffer.from(order.transaction, "base64"),
@@ -172,6 +187,7 @@ export async function prepareSwap(coin, side, amount) {
   let used = false;
   return {
     output: fromUnits(order.outAmount, side === "Buy" ? coin.decimals : 9),
+    minimum: order.otherAmountThreshold ? fromUnits(order.otherAmountThreshold, side === 'Buy' ? coin.decimals : 9) : 'Provider threshold unavailable',
     outputSymbol: side === "Buy" ? coin.ticker : "SOL",
     route: `Jupiter / ${order.router || "aggregator"}`,
     fee: order.feeBps == null ? "Provider quote" : `${order.feeBps / 100}%`,
@@ -186,22 +202,29 @@ export async function prepareSwap(coin, side, amount) {
         throw new Error("Wallet changed. Request a new quote.");
       if (Date.now() > expires)
         throw new Error("Quote expired. Request a fresh quote.");
-      const signed = await provider.signTransaction(tx);
+      used = true;
+      const signer = provider;
+      const signed = await signer.signTransaction(tx);
+      if (publicKey?.toBase58() !== taker || provider !== signer) throw new Error('Wallet changed during signing.');
       if (!Buffer.from(signed.message.serialize()).equals(message))
         throw new Error("Wallet changed the transaction message.");
-      used = true;
-      const result = await api("/swap/execute", {
-        method: "POST",
-        body: JSON.stringify({
-          signedTransaction: Buffer.from(signed.serialize()).toString("base64"),
-          requestId: order.requestId,
-        }),
-      });
+      const signature = bs58.encode(signed.signatures[0]);
+      recordTransaction({ signature, wallet: taker, state: 'submitted', network: 'mainnet-beta' });
+      let result;
+      try {
+        result = await api('/swap/execute', { method: 'POST', body: JSON.stringify({ signedTransaction: Buffer.from(signed.serialize()).toString('base64'), requestId: order.requestId }) });
+      } catch {
+        recordTransaction({ signature, state: 'unknown' });
+        throw new TransactionOutcomeError(signature, 'unknown', 'Swap submission outcome is unknown.');
+      }
       if (result.status !== "Success")
-        throw new Error(
-          `Swap failed${result.signature ? ` (${result.signature})` : ""}: ${result.error || result.code || "provider rejected transaction"}`,
-        );
-      return result.signature;
+        {
+          recordTransaction({ signature, state: 'unknown' });
+          throw new TransactionOutcomeError(signature, 'unknown', `Swap provider did not confirm success: ${result.error || result.code || 'provider rejected transaction'}.`);
+        }
+      if (!result.signature) throw new Error('Provider did not return a transaction signature.');
+      if (result.signature !== signature) throw new TransactionOutcomeError(signature, 'unknown', 'Provider returned an unexpected signature.');
+      return pollTransaction(connection, result.signature, { onState: state => recordTransaction({ signature: result.signature, state }) });
     },
   };
 }
@@ -238,7 +261,7 @@ export async function prepareLaunch({ name, ticker, uri }) {
     0,
   ).publicKey;
   const account = await connection.getAccountInfo(configId);
-  if (!account)
+  if (!account?.owner.equals(sdk.LAUNCHPAD_PROGRAM))
     throw new Error("Raydium SOL launch configuration is unavailable.");
   const configInfo = sdk.LaunchpadConfig.decode(account.data);
   const { transactions, extInfo } = await instance.launchpad.createLaunchpad({
@@ -285,7 +308,7 @@ export async function prepareLaunch({ name, ticker, uri }) {
       used = true;
       const signatures = [];
       for (const tx of transactions)
-        signatures.push(await submitAndConfirm(tx));
+        signatures.push(await submitAndConfirm(tx, { operation: 'launch', mint: mint.publicKey.toBase58(), poolId: extInfo.address.poolId.toBase58() }));
       return signatures;
     },
   };
@@ -364,22 +387,27 @@ export async function launchState(coin) {
   return {
     pool,
     progress,
-    graduated: Number(pool.status) !== 0,
+    graduated: Number(pool.status) === 2,
     raised: fromUnits(pool.realB.toString(), 9),
     target: fromUnits(pool.totalFundRaisingB.toString(), 9),
   };
 }
 
-export async function prepareCurveTrade(coin, side, amount) {
+export async function prepareCurveTrade(coin, side, amount, slippageBps = 100) {
   await assertMainnet();
   const owner = publicKey.toBase58();
   const { sdk, instance } = await raydium();
   const poolInfo = await instance.launchpad.getRpcPoolInfo({
     poolId: new PublicKey(coin.poolId),
   });
-  if (Number(poolInfo.status) !== 0) return prepareSwap(coin, side, amount);
+  if (Number(poolInfo.status) === 1) throw new Error('Pool is migrating. Trading resumes after graduation completes.');
+  if (Number(poolInfo.status) === 2) return prepareSwap(coin, side, amount, slippageBps);
+  if (Number(poolInfo.status) !== 0) throw new Error('Unsupported pool status.');
+  if (!poolInfo.mintA.equals(new PublicKey(coin.mint)) || !poolInfo.mintB.equals(new PublicKey(SOL))) throw new Error('Pool mints do not match this SOL launch.');
+  if (poolInfo.mintDecimalsA !== coin.decimals || poolInfo.mintDecimalsB !== 9) throw new Error('Pool decimals do not match the token.');
+  minimumOutput('1', slippageBps);
   const platformAccount = await connection.getAccountInfo(poolInfo.platformId);
-  if (!platformAccount)
+  if (!platformAccount?.owner.equals(sdk.LAUNCHPAD_PROGRAM))
     throw new Error("Pool platform configuration could not be loaded.");
   const platformInfo = sdk.PlatformConfig.decode(platformAccount.data);
   const common = {
@@ -391,7 +419,7 @@ export async function prepareCurveTrade(coin, side, amount) {
     poolInfo,
     configInfo: poolInfo.configInfo,
     platformFeeRate: platformInfo.feeRate,
-    slippage: new BN(100),
+    slippage: new BN(slippageBps),
     txVersion: sdk.TxVersion.V0,
   };
   const units = new BN(toUnits(amount, side === "Buy" ? 9 : coin.decimals));
@@ -404,27 +432,56 @@ export async function prepareCurveTrade(coin, side, amount) {
     shareFeeRate: new BN(0),
     slot: await connection.getSlot(),
   };
-  let output, built;
+  let output, built, rawOutput, splitFee;
   if (side === "Buy") {
     const preview = sdk.Curve.buyExactIn({ ...fees, amountB: units });
     output = fromUnits(preview.amountA.amount.toString(), coin.decimals);
-    built = await instance.launchpad.buyToken({ ...common, buyAmount: units });
+    rawOutput = preview.amountA.amount.toString();
+    splitFee = preview.splitFee;
+    built = await instance.launchpad.buyToken({ ...common, buyAmount: units, minMintAAmount: new BN(minimumOutput(rawOutput, slippageBps)) });
   } else {
     const preview = sdk.Curve.sellExactIn({ ...fees, amountA: units });
     output = fromUnits(preview.amountB.toString(), 9);
+    rawOutput = preview.amountB.toString();
+    splitFee = preview.splitFee;
     built = await instance.launchpad.sellToken({
       ...common,
       sellAmount: units,
+      minAmountB: new BN(minimumOutput(rawOutput, slippageBps)),
     });
   }
   const expires = Date.now() + 45000;
   let used = false;
+  const tables = await Promise.all(built.transaction.message.addressTableLookups.map(async lookup => {
+    const { value } = await connection.getAddressLookupTable(lookup.accountKey);
+    if (!value) throw new Error('Transaction lookup table is unavailable.');
+    return value;
+  }));
+  const keys = built.transaction.message.getAccountKeys({ addressLookupTableAccounts: tables });
+  validateCurveInstruction(built.transaction, keys, {
+    program: sdk.LAUNCHPAD_PROGRAM.toBase58(), owner, side, input: units.toString(), minimum: minimumOutput(rawOutput, slippageBps),
+    pool: coin.poolId, mintA: coin.mint, mintB: SOL,
+    userA: sdk.getATAAddress(publicKey, new PublicKey(coin.mint), common.mintAProgram).publicKey.toBase58(),
+    userB: sdk.getATAAddress(publicKey, new PublicKey(SOL), common.mintBProgram).publicKey.toBase58(),
+    vaultA: poolInfo.vaultA.toBase58(), vaultB: poolInfo.vaultB.toBase58(),
+    maxSystemLamports: ((side === 'Buy' ? BigInt(units.toString()) : 0n) + BigInt(await connection.getMinimumBalanceForRentExemption(165))).toString(),
+  });
+  const rent = BigInt(await connection.getMinimumBalanceForRentExemption(165));
+  const fee = (await connection.getFeeForMessage(built.transaction.message, 'confirmed')).value;
+  if (fee == null) throw new Error('Transaction fee/blockhash is unavailable. Refresh the quote.');
+  const requiredSol = (side === 'Buy' ? BigInt(units.toString()) : 0n) + rent * 2n + BigInt(fee);
+  if (BigInt(await connection.getBalance(publicKey)) < requiredSol) throw new Error('Insufficient SOL for this trade and the reserved account rent/network fee.');
+  if (side === 'Sell' && BigInt((await balances()).tokens.find(token => token.mint === coin.mint)?.amount || '0') < BigInt(units.toString())) throw new Error('Insufficient token balance.');
+  const simulation = await connection.simulateTransaction(built.transaction);
+  if (simulation.value.err) throw new Error(`Trade simulation failed: ${JSON.stringify(simulation.value.err)}`);
   return {
     output,
+    minimum: fromUnits(minimumOutput(rawOutput, slippageBps), side === 'Buy' ? coin.decimals : 9),
+    feeDetails: [...Object.entries(splitFee).map(([name, value]) => [name, fromUnits(value.toString(), 9)]), ['Network fee estimate', fromUnits(String(fee), 9)], ['Account rent reserve (may be refunded)', fromUnits((rent * 2n).toString(), 9)]],
     outputSymbol: side === "Buy" ? coin.ticker : "SOL",
     route: "Raydium LaunchLab",
     fee: "On-chain pool rates",
-    slippage: "1%",
+    slippage: `${slippageBps / 100}%`,
     expires,
     async execute() {
       if (used || Date.now() > expires)

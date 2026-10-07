@@ -32,7 +32,7 @@ export function publicHttps(value) {
   return url;
 }
 
-export function installSetup(app, { config, directory, onSave, upstream }) {
+export function installSetup(app, { config, directory, onSave, upstream, checkStorage }) {
   const token = randomBytes(32).toString("hex");
   const local = (req) => {
     if (config.LOCAL_SETUP_ENABLED === "false") return false;
@@ -125,9 +125,10 @@ export function installSetup(app, { config, directory, onSave, upstream }) {
                 : "Configure Pinata or a public upload domain.",
             ),
           ),
+      checkStorage(),
     ]);
     const result = checks.map((check, i) => ({
-      name: ["Solana RPC", "Jupiter", "Public uploads"][i],
+      name: ["Solana RPC", "Jupiter", "Public uploads", "Community storage"][i],
       ok:
         check.status === "fulfilled" &&
         (i !== 0 ||
@@ -139,7 +140,7 @@ export function installSetup(app, { config, directory, onSave, upstream }) {
             check.value.result !==
               "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
             ? "RPC is not Solana mainnet."
-            : "Provider responded."
+            : i === 2 ? 'Credentials verified; a real upload still needs testing.' : i === 3 ? 'Community storage responded.' : "Provider responded."
           : i === 2 && !config.PINATA_JWT
             ? check.reason.message
             : "Provider could not be verified. Check your configuration.",

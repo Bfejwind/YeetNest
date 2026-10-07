@@ -23,4 +23,5 @@ export const prepareSwap = unavailable;
 export const creatorFeeBalance = unavailable;
 export const prepareCreatorClaim = unavailable;
 export const walletActivity = unavailable;
+export const recoverTransactions = unavailable;
 export async function disconnectWallet() {}

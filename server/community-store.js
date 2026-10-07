@@ -2,6 +2,7 @@ import { readFile, writeFile, rename, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import { databaseConfig } from './database-config.js';
 
 const fail = (message, status) => Object.assign(new Error(message), { status });
 const authorName = wallet => `${wallet.slice(0, 4)}...${wallet.slice(-4)}`;
@@ -61,7 +62,7 @@ export function createCommunityStore({ databaseUrl, directory }) {
 }
 
 function postgresStore(connectionString) {
-  const pool = new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000 });
+  const pool = new pg.Pool({ ...databaseConfig(connectionString), max: 10, idleTimeoutMillis: 30000 });
   pool.on('error', () => { console.error('Community database connection error.'); });
   const post = row => ({ ...row, created: Number(row.created), author: row.author || authorName(row.wallet) });
   return {

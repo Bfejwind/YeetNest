@@ -8,6 +8,7 @@ import "./color-theme.css";
 import "./dark-theme.css";
 import "./pump-theme.css";
 import { installMarketUI, mountDiscussion } from "./market-ui.js";
+import { walletBrowseLink } from './wallet-links.js';
 
 const I = (name) => `<i data-lucide="${name}"></i>`;
 const esc = (value) =>
@@ -118,7 +119,7 @@ const art = (coin) =>
   `<img src="${esc(image(coin))}" alt="${esc(coin.name)}" loading="lazy"/>`;
 function persist() {
   localStorage.setItem("yn-coins", JSON.stringify(demoCoins));
-  localStorage.setItem("yn-watchlist", JSON.stringify(watchlist));
+  if (mode === 'demo') localStorage.setItem("yn-watchlist", JSON.stringify(watchlist));
   localStorage.setItem("yn-positions", JSON.stringify(positions));
   localStorage.setItem("yn-balance", JSON.stringify(demoBalance));
 }
@@ -273,7 +274,7 @@ function render() {
       refreshLive();
     },
   });
-  installMarketUI({ page, mode, coins: allCoins(), esc, money, image, openCoin: detail, toast, navigate: next => { page = next; render(); } });
+  installMarketUI({ page, mode, coins: allCoins(), esc, money, image, openCoin: detail, toast, setWatchlist: values => { watchlist = values; render(); }, navigate: next => { page = next; render(); } });
   if (chain.hostedDemo) document.querySelector(".content").insertAdjacentHTML("afterbegin", '<div class="notice">Online demo. Launches, artwork and simulated trades stay in this browser. Mainnet trading is not enabled.</div>');
   createIcons({ icons });
 }
@@ -381,11 +382,15 @@ function integrations() {
       "",
     )}</div><section class="parity"><h2>StonkFun feature parity</h2><p>Reference access is incomplete. These gaps are based on published launch documentation, not a full audit of StonkFun.</p><div class="table-wrap"><table><thead><tr><th>Feature</th><th>YeetNest status</th><th>Remaining work</th></tr></thead><tbody>${parity.map(([a, b, c]) => `<tr><td>${a}</td><td><span class="status-pill ${b === "Unfinished" ? "pending" : ""}">${b}</span></td><td>${c}</td></tr>`).join("")}</tbody></table></div><a class="source-link" href="https://docs.sumo.trade/launch-tokens/stonkfun-launch" target="_blank" rel="noopener noreferrer">Published StonkFun launch documentation ${I("external-link")}</a></section>`;
 }
+let discoveryPage = 0;
 function drawCoins() {
   const container = document.querySelector("#coins");
   if (!container) return;
+  const matches = filtered();
+  const pages = Math.max(1, Math.ceil(matches.length / 24));
+  discoveryPage = Math.min(discoveryPage, pages - 1);
   container.innerHTML =
-    filtered()
+    matches.slice(discoveryPage * 24, (discoveryPage + 1) * 24)
       .map((t) => {
         const holding = (mode === "demo" ? positions : liveHoldings).find(
           (p) => String(p.id || p.mint) === String(t.id),
@@ -400,10 +405,26 @@ function drawCoins() {
       if (e.key === "Enter") detail(el.dataset.coin);
     };
   });
+  document.querySelector('#discovery-pagination')?.remove();
+  container.insertAdjacentHTML('afterend', `<div id="discovery-pagination" class="discovery-pagination"><button class="icon-button" id="previous-coins" title="Previous page" ${discoveryPage === 0 ? 'disabled' : ''}>${I('chevron-left')}</button><span>${discoveryPage + 1} / ${pages}</span><button class="icon-button" id="next-coins" title="Next page" ${discoveryPage + 1 >= pages ? 'disabled' : ''}>${I('chevron-right')}</button></div>`);
+  document.querySelector('#previous-coins').onclick = () => { discoveryPage--; drawCoins(); };
+  document.querySelector('#next-coins').onclick = () => { discoveryPage++; drawCoins(); };
   document.querySelectorAll("[data-save]").forEach((el) => {
-    el.onclick = (e) => {
+    el.onclick = async (e) => {
       e.stopPropagation();
       const id = el.dataset.save;
+      if (mode === 'live') {
+        el.disabled = true;
+        try {
+          await chain.authenticate();
+          const prior = await chain.api('/watchlist');
+          const next = prior.includes(id) ? prior.filter(mint => mint !== id) : [...prior, id];
+          watchlist = await chain.api('/watchlist', { method: 'PUT', body: JSON.stringify({ mints: next }) });
+          render();
+        } catch(error) { toast(error.message); }
+        finally { el.disabled = false; }
+        return;
+      }
       watchlist = watchlist.includes(id)
         ? watchlist.filter((x) => x !== id)
         : [...watchlist, id];
@@ -441,6 +462,7 @@ function bind() {
       (b.onclick = () => {
         if (mode === b.dataset.mode) return;
         mode = b.dataset.mode;
+        watchlist = mode === 'demo' ? read('yn-watchlist', []).map(String) : [];
         query = "";
         tab = "Trending";
         category = "All coins";
@@ -660,12 +682,34 @@ function walletModal() {
           render();
           toast("Demo wallet connected.");
         };
+      if (mode === 'live') {
+        document.querySelector('#form-error').insertAdjacentHTML('beforebegin', `<button class="wallet-option" data-wallet="Solflare Web">${I('external-link')} Solflare Web ${I('arrow-up-right')}</button><button class="wallet-option" data-phone-wallet="Phantom">${I('smartphone')} Phantom on phone ${I('arrow-up-right')}</button><button class="wallet-option" data-phone-wallet="Solflare">${I('smartphone')} Solflare on phone ${I('arrow-up-right')}</button><div id="phone-wallet"></div>`);
+        document.querySelectorAll('[data-phone-wallet]').forEach(button => button.onclick = async () => {
+          const root = document.querySelector('#phone-wallet');
+          const error = document.querySelector('#form-error');
+          error.textContent = '';
+          button.disabled = true;
+          try {
+            const link = walletBrowseLink(button.dataset.phoneWallet, location.href);
+            const QRCode = await import('qrcode');
+            const image = await QRCode.default.toDataURL(link, { width: 224, margin: 2, errorCorrectionLevel: 'M' });
+            if (!root.isConnected) return;
+            root.innerHTML = `<h3>${esc(button.dataset.phoneWallet)} on phone</h3><span class="status-pill">Phone session</span><img class="wallet-qr" src="${image}" alt="Open YeetNest in ${esc(button.dataset.phoneWallet)} on your phone"/><a class="source-link" href="${esc(link)}" rel="noopener noreferrer">Open ${esc(button.dataset.phoneWallet)} ${I('arrow-up-right')}</a>`;
+            createIcons({ icons });
+          } catch(e) { if (root.isConnected) error.textContent = e.message; }
+          finally { button.disabled = false; }
+        });
+        createIcons({ icons });
+      }
       document.querySelectorAll("[data-wallet]").forEach(
         (b) =>
           (b.onclick = async () => {
             b.disabled = true;
+            document.querySelector('#wallet-help')?.remove();
+            document.querySelector('#form-error').textContent = '';
             try {
               await chain.connectWallet(b.dataset.wallet);
+              watchlist = [];
               walletEpoch++;
               const provider = chain.provider;
               provider.on?.("accountChanged", async () => {
@@ -673,6 +717,7 @@ function walletModal() {
                 walletEpoch++;
                 solBalance = null;
                 liveHoldings = [];
+                watchlist = [];
                 await chain.disconnectWallet();
                 if (mode === "live") render();
                 toast("Wallet account changed. Reconnect to continue.");
@@ -682,6 +727,7 @@ function walletModal() {
                 walletEpoch++;
                 solBalance = null;
                 liveHoldings = [];
+                watchlist = [];
                 if (chain.provider === provider)
                   chain.disconnectWallet().catch(() => {});
                 if (mode === "live") render();
@@ -689,7 +735,19 @@ function walletModal() {
               render();
               refreshHoldings();
             } catch (e) {
+              if (!b.isConnected) return;
               inlineError(e);
+              if (e.code === 'WALLET_UNAVAILABLE') {
+                document.querySelector('#wallet-help')?.remove();
+                const link = document.createElement('a');
+                link.id = 'wallet-help';
+                link.className = 'source-link';
+                link.href = e.wallet === 'Phantom' ? 'https://phantom.com/download' : 'https://solflare.com/download';
+                link.target = '_blank';
+                link.rel = 'noopener noreferrer';
+                link.textContent = `Get ${e.wallet}`;
+                document.querySelector('#form-error').after(link);
+              }
               b.disabled = false;
             }
           }),
@@ -841,21 +899,21 @@ function reviewLaunch(prepared, metadata, d) {
         b.textContent = "Awaiting wallet and confirmation...";
         let signatures;
         try {
-          signatures = await prepared.execute();
           const record = {
             mint: prepared.mint,
             poolId: prepared.poolId,
             uri: metadata.uri,
           };
-          sessionStorage.setItem(
+            localStorage.setItem(
             "yn-pending-registration",
-            JSON.stringify(record),
+              JSON.stringify({ ...record, wallet: chain.publicKey.toBase58() }),
           );
+            signatures = await prepared.execute();
           await chain.api("/coins", {
             method: "POST",
             body: JSON.stringify(record),
           });
-          sessionStorage.removeItem("yn-pending-registration");
+            localStorage.removeItem("yn-pending-registration");
           transactionResult(
             "Your coin has hatched.",
             signatures[0],
@@ -876,11 +934,12 @@ function reviewLaunch(prepared, metadata, d) {
             b.onclick = async () => {
               b.disabled = true;
               try {
+                  await chain.authenticate();
                 await chain.api("/coins", {
                   method: "POST",
-                  body: sessionStorage.getItem("yn-pending-registration"),
+                    body: localStorage.getItem("yn-pending-registration"),
                 });
-                sessionStorage.removeItem("yn-pending-registration");
+                  localStorage.removeItem("yn-pending-registration");
                 transactionResult(
                   "Coin registered.",
                   signatures[0],
@@ -923,6 +982,7 @@ function detail(id) {
             `<div class="coin-socials">${socialLinks.map(([label, url]) => `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${I("external-link")} ${esc(label)}</a>`).join("")}</div>`,
           );
       if (mode === "live") {
+        document.querySelector('#amount-label').insertAdjacentHTML('afterend', '<label>Slippage<select name="slippage"><option value="50">0.5%</option><option value="100" selected>1%</option><option value="200">2%</option><option value="500">5%</option></select></label>');
         document
           .querySelector("#trade-form")
           .insertAdjacentHTML(
@@ -930,6 +990,17 @@ function detail(id) {
             '<section id="live-market" class="live-market"></section>',
           );
         mountMarket(coin, { esc });
+        const root = document.querySelector('#live-market');
+        root.insertAdjacentHTML('afterend', '<section id="token-evidence" class="live-market"><h3>Recent trades</h3><div id="recent-trades">Loading...</div><h3>Largest token accounts</h3><div id="largest-accounts">Loading...</div></section>');
+        const evidence = document.querySelector('#token-evidence');
+        chain.api(`/trades/${coin.mint}`).then(result => {
+          if (!evidence.isConnected) return;
+          evidence.querySelector('#recent-trades').innerHTML = result.trades.map(trade => `<div class="health-check"><div><b>${esc(trade.kind)}</b><span>${esc(trade.block_timestamp || '')}</span></div><a href="https://solscan.io/tx/${esc(trade.tx_hash)}" target="_blank" rel="noopener noreferrer">${esc(String(trade.tx_hash).slice(0, 10))}</a><small>${trade.volume_in_usd ? esc(trade.volume_in_usd) + ' USD' : '--'}</small></div>`).join('') || '<p class="muted">No indexed trades available.</p>';
+        }).catch(() => { if (evidence.isConnected) evidence.querySelector('#recent-trades').textContent = 'Recent trade data unavailable.'; });
+        chain.api(`/holders/${coin.mint}`).then(result => {
+          if (!evidence.isConnected) return;
+          evidence.querySelector('#largest-accounts').innerHTML = result.accounts.map(account => `<div class="health-check"><a href="https://solscan.io/account/${esc(account.address)}" target="_blank" rel="noopener noreferrer">${esc(short(account.address))}</a><small>${esc(fromUnits(account.amount, account.decimals))}</small></div>`).join('') || '<p class="muted">No token account data available.</p>';
+        }).catch(() => { if (evidence.isConnected) evidence.querySelector('#largest-accounts').textContent = 'Token account data unavailable.'; });
       }
       document
         .querySelectorAll("[data-amount]")
@@ -991,8 +1062,8 @@ function detail(id) {
           } else {
             b.textContent = "Fetching live quote...";
             const prepared = await (coin.poolId
-              ? chain.prepareCurveTrade(coin, side, amount)
-              : chain.prepareSwap(coin, side, amount));
+              ? chain.prepareCurveTrade(coin, side, amount, Number(e.target.elements.slippage.value))
+              : chain.prepareSwap(coin, side, amount, Number(e.target.elements.slippage.value)));
             reviewTrade(coin, side, amount, prepared);
           }
         } catch (error) {
@@ -1022,6 +1093,7 @@ function reviewTrade(coin, side, amount, quote) {
           b.textContent = "Quote closed · request a new quote";
         }
       };
+      document.querySelector('.trade-review').insertAdjacentHTML('beforeend', `<span>Minimum received <b>${esc(quote.minimum || 'Unavailable')} ${quote.minimum && !quote.minimum.includes('unavailable') ? esc(quote.outputSymbol) : ''}</b></span>${(quote.feeDetails || []).map(([label, amount]) => `<span>${esc(label)} <b>${esc(amount)} SOL</b></span>`).join('')}`);
     },
   );
 }

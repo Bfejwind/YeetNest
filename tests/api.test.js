@@ -7,17 +7,58 @@ import { createApi } from '../server/api.js';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createAppStore } from '../server/app-store.js';
+import { PNG } from 'pngjs';
 
-async function withApi(fetcher, callback) {
+async function withApi(fetcher, callback, config = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'yeetnest-test-'));
-  const app = express(); app.use(createApi({ fetcher, config: {}, storageDir: directory }));
+  const app = express(); app.use(createApi({ fetcher, config, storageDir: directory }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   const root = `http://127.0.0.1:${server.address().port}`;
-  const request = (path, body, headers = {}, method = 'POST') => fetch(root + '/api' + path, body === undefined ? { headers } : { method, headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
-  try { await callback(request); } finally { await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); }
+  const request = (path, body, headers = {}, method = 'POST', hostname = '127.0.0.1') => fetch(root.replace('127.0.0.1', hostname) + '/api' + path, body === undefined ? { headers } : { method, headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  try { await callback(request, directory); } finally { await new Promise(resolve => server.close(resolve)); await rm(directory, { recursive: true, force: true }); }
 }
 const ok = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+
+test('metadata upload decodes PNG and persists references using a controlled Pinata response', async () => {
+  let uploads = 0;
+  await withApi(async url => {
+    assert.equal(url, 'https://uploads.pinata.cloud/v3/files');
+    uploads++;
+    return ok({ data: { cid: uploads === 1 ? 'TestImageCid' : 'TestMetadataCid' } });
+  }, async (request, directory) => {
+    const wallet = Keypair.generate();
+    const challenge = await (await request('/auth/challenge', { wallet: wallet.publicKey.toBase58() })).json();
+    const signature = Buffer.from(nacl.sign.detached(Buffer.from(challenge.message), wallet.secretKey)).toString('base64');
+    const { token } = await (await request('/auth/verify', { nonce: challenge.nonce, signature })).json();
+    const headers = { Authorization: `Bearer ${token}` };
+    const png = PNG.sync.write({ width: 1, height: 1, data: Buffer.from([255, 0, 0, 255]) });
+    const fields = { name: 'Upload Test', ticker: 'TEST', description: 'Controlled provider test' };
+    const malformed = Buffer.from(png); malformed[malformed.length - 1] ^= 255;
+    assert.equal((await request('/metadata', { ...fields, image: 'data:image/png;base64,' + malformed.toString('base64') }, headers)).status, 400);
+    const response = await request('/metadata', { ...fields, image: 'data:image/png;base64,' + png.toString('base64') }, headers);
+    assert.equal(response.status, 200);
+    const uploaded = await response.json();
+    assert.equal(uploads, 2);
+    const reopened = createAppStore({ directory });
+    const references = await reopened.get('upload-references');
+    assert.equal(references[0][1].wallet, wallet.publicKey.toBase58());
+    assert.equal(references[0][1].uri, uploaded.uri);
+    await reopened.close();
+  }, { PINATA_JWT: 'controlled-test-token' });
+});
+
+test('connection diagnostics include community storage and verify mainnet', async () => {
+  const mainnet = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
+  await withApi(async url => ok(url.includes('solana.com') ? { result: mainnet } : []), async request => {
+    const { checks } = await (await request('/health')).json();
+    assert.equal(checks.length, 4);
+    assert.equal(checks.find(c => c.name === 'Solana RPC').ok, true);
+    assert.equal(checks.find(c => c.name === 'Community storage').ok, true);
+    assert.equal(checks.find(c => c.name === 'Public uploads').ok, false);
+  });
+});
 
 test('shared community uses signed identity, owner deletion and private reports', async () => {
   await withApi(async () => ok({}), async request => {
@@ -51,6 +92,12 @@ test('shared community uses signed identity, owner deletion and private reports'
     assert.equal((await request('/community/coins/invalid/comments')).status, 400);
     assert.equal((await request(`/community/comments/${post.id}`, {}, a, 'DELETE')).status, 200);
     assert.deepEqual(await (await request(endpoint)).json(), []);
+    assert.equal((await request('/watchlist')).status, 401);
+    assert.equal((await request('/watchlist', { mints: [mint] }, a, 'PUT')).status, 200);
+    assert.deepEqual(await (await request('/watchlist', undefined, a)).json(), [mint]);
+    assert.deepEqual(await (await request('/watchlist', undefined, b)).json(), []);
+    assert.equal((await request('/watchlist', { mints: ['invalid'] }, a, 'PUT')).status, 400);
+    assert.equal((await request('/metadata', { name: 'Test', ticker: 'TEST', image: 'data:image/png;base64,AAAA' }, a)).status, 400);
   });
 });
 
@@ -103,6 +150,16 @@ test('wallet authentication verifies signatures and prevents challenge replay', 
     assert.ok((await response.json()).token);
     assert.equal((await request('/auth/verify', { nonce: challenge.nonce, signature })).status, 401);
     assert.equal((await request('/metadata', {})).status, 401);
+    const other = await (await request('/auth/challenge', { wallet: wallet.publicKey.toBase58() })).json();
+    const otherSignature = Buffer.from(nacl.sign.detached(Buffer.from(other.message), wallet.secretKey)).toString('base64');
+    assert.equal((await request('/auth/verify', { nonce: other.nonce, signature: otherSignature }, {}, 'POST', 'localhost')).status, 401);
+    const expired = await (await request('/auth/challenge', { wallet: wallet.publicKey.toBase58() })).json();
+    const expiredSignature = Buffer.from(nacl.sign.detached(Buffer.from(expired.message), wallet.secretKey)).toString('base64');
+    const now = Date.now;
+    try {
+      Date.now = () => now() + 300001;
+      assert.equal((await request('/auth/verify', { nonce: expired.nonce, signature: expiredSignature })).status, 401);
+    } finally { Date.now = now; }
   });
 });
 

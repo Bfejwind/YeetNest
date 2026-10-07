@@ -22,9 +22,21 @@ export function installMarketUI(context) {
   }
   const content = document.querySelector('.content');
   if (page === 'Explore') content.querySelector('.heading h1').textContent = 'Explore coins';
+  if (page === 'Watchlist' && mode === 'live') {
+    const button = document.createElement('button');
+    button.className = 'secondary';
+    button.innerHTML = `${icon('refresh-cw')} Sync watchlist`;
+    content.querySelector('.heading').append(button);
+    button.onclick = async () => {
+      button.disabled = true;
+      try { await chain.authenticate(); context.setWatchlist(await chain.api('/watchlist')); }
+      catch(error) { toast(error.message); }
+      finally { button.disabled = false; }
+    };
+  }
   if (page === 'Integrations') {
     document.querySelector('.parity h2').textContent = 'Pump.fun feature coverage';
-    document.querySelector('.parity p').textContent = 'Independent YeetNest implementation. Raydium is not Pump protocol parity. The public release is demo-only.';
+    document.querySelector('.parity p').textContent = 'YeetNest uses Raydium, not Pump contracts. Funded launch, trading and claim acceptance remain unverified.';
     document.querySelector('.parity tbody').innerHTML = pumpFeatures.map(([name, status, remaining]) => `<tr><td>${esc(name)}</td><td><span class="status-pill ${status === 'Not implemented' || status === 'Demo only' ? 'pending' : ''}">${status}</span></td><td>${esc(remaining)}</td></tr>`).join('');
     const source = document.querySelector('.parity .source-link');
     source.href = 'https://github.com/pump-fun/pump-public-docs';

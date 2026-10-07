@@ -130,3 +130,8 @@
   .ranking-row > span:nth-child(3) { min-width: 0; flex: 1; }
   .ranking-row strong { overflow-wrap: anywhere; }
 }
+#phone-wallet:empty { display: none; }
+#phone-wallet { margin-top: 16px; }
+#phone-wallet h3 { font-size: 18px; margin-bottom: 8px; }
+.wallet-qr { display: block; width: 224px; max-width: 100%; aspect-ratio: 1; margin: 12px auto; }
+.discovery-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; }

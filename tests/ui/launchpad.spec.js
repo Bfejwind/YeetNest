@@ -10,7 +10,7 @@ test('live candles render and creator studio is usable on desktop and mobile', a
   await page.locator('[data-mode="live"]').click();
   await page.locator('.coin').first().click();
   await expect(page.locator('#token-chart canvas').first()).toBeVisible();
-  expect(await page.locator('#token-chart canvas').first().evaluate(canvas => {
+  await expect.poll(() => page.locator('#token-chart canvas').first().evaluate(canvas => {
     const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
     return pixels.some((value, index) => index % 4 === 3 && value > 0);
   })).toBe(true);
@@ -89,7 +89,7 @@ test('live wallet review requires explicit signing and reports provider failure 
   await page.route('**/api/tokens*', r => r.fulfill({ contentType: 'application/json', body: JSON.stringify([{ id: mint, name: 'Live Test Token', symbol: 'LIVE', decimals: 6, mcap: 12345, stats24h: { priceChange: 2, buyVolume: 30, sellVolume: 20 } }]) }));
   await page.route('**/api/rpc', async r => {
     const { method, id } = r.request().postDataJSON();
-    const result = method === 'getGenesisHash' ? '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d' : method === 'getBalance' ? { context: { slot: 1 }, value: 1000000000 } : { context: { slot: 1 }, value: [] };
+    const result = method === 'getGenesisHash' ? '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d' : method === 'getBalance' ? { context: { slot: 1 }, value: 1000000000 } : method === 'getAccountInfo' ? { context: { slot: 1 }, value: { owner: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', data: { parsed: { type: 'mint', info: { decimals: 6 } }, program: 'spl-token', space: 82 }, executable: false, lamports: 1000000, rentEpoch: 0 } } : { context: { slot: 1 }, value: [] };
     await r.fulfill({ contentType: 'application/json', body: JSON.stringify({ jsonrpc: '2.0', id, result }) });
   });
   await page.route('**/api/swap/order*', r => r.fulfill({ contentType: 'application/json', body: JSON.stringify({ requestId: 'test', transaction: Buffer.from(tx.serialize()).toString('base64'), outAmount: '1000000', router: 'metis', feeBps: 10 }) }));

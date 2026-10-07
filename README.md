@@ -22,9 +22,19 @@ Set values in the project's `.env`, using `.env.example` as the template, and re
 | `PINATA_JWT` | Required for public IPFS coin artwork and metadata uploads. |
 | `IPFS_GATEWAY` | Public gateway prefix ending in `/ipfs/`. Defaults to Pinata. |
 | `PORT` | Production HTTP port, default 3000. |
-| `DATABASE_URL` | Optional server-only PostgreSQL connection string for shared profiles, comments and reports. Run `npm run db:migrate` before starting. |
+| `DATABASE_URL` | Server-only PostgreSQL connection string for profiles, comments, reports, catalogue, upload references and watchlists. Run `npm run db:migrate` before starting. |
+| `DATA_DIR` | Writable runtime folder; persistent disk required for JSON fallback or self-hosted uploads. |
+| `NODE_ENV` | Set to `production` on Render. |
+| `TRUST_PROXY_HOPS` | Set to `1` behind Render's reverse proxy; `0` for direct local access. |
+| `PUBLIC_BASE_URL` | Optional public HTTPS origin for self-hosted uploads; still requires a persistent disk. |
 
 Do not add private wallet keys or `VITE_`-prefixed credentials. Phantom and Solflare sign transactions in the browser. Creator uploads use a short-lived, nonce-based wallet signature session.
+
+Wallet discovery supports injected Phantom/Solflare providers and the official Solana Wallet Standard adapter, including a short retry for late extension injection. Use the Render HTTPS website directly in a browser where the extension is enabled and allowed site access. On mobile, open that URL inside the wallet app's browser. Missing-wallet errors offer official download links; there is no embedded wallet, remote pairing or automatic installation. The static Sites demo still blocks mainnet wallet connections.
+
+Extension-free options: choose **Solflare Web** for the official SDK connection surface, or **Phantom on phone / Solflare on phone** for a QR/universal link to the deployed website in the mobile wallet browser. Phone handoff creates a phone session, not a remotely connected desktop session. A wallet still needs to hold the user's keys somewhere; never enter seed phrases into YeetNest. External provider UI and real signature/transaction approval need operator acceptance testing. Phantom embedded login requires an approved existing App ID; current official docs say new Portal registrations are paused.
+
+Connection diagnostics under Integrations now check community storage as well as RPC, Jupiter and upload credentials. Upload authentication is not proof of public artwork reachability. `/readyz` checks community storage continuously. In production, Render environment variables take precedence over saved local provider settings. Restart the local dev server after changing `.env`. Render external PostgreSQL URLs automatically use verified TLS when no SSL settings are supplied; use the internal URL on Render and the external URL locally.
 
 ## What Works
 
@@ -47,7 +57,7 @@ Read-only live checks confirmed Jupiter token search/top-traded responses, Solan
 
 Public RPC and keyless Jupiter limits can cause failures. Active market views refresh every 60 seconds. DexScreener supplies indexed pool metrics and GeckoTerminal supplies real hourly candles; unindexed assets show an unavailable state rather than synthetic charts.
 
-Catalogue and upload references persist under `data/` with serialized atomic writes, suitable for a single process. Authentication challenges and quote state remain transient. A production deployment needs a durable database, shared sessions, an indexer, distributed quotas, image moderation, backup, and monitoring.
+With `DATABASE_URL`, catalogue, upload references and wallet watchlists now persist in PostgreSQL with transactional row locking. JSON fallback retains serialized atomic writes. Sessions, challenges, quotes and rate limits remain transient: run one instance. A production deployment still needs an indexer, shared sessions/quotas for scaling, image moderation, backups and monitoring. Public transaction signatures are journaled before broadcast and reconciled against chain status, without automatic rebroadcast.
 
 ## Provider Setup
 
@@ -74,9 +84,11 @@ The current request supersedes the earlier StonkFun comparison. Integrations now
 1. Create a managed PostgreSQL database and configure its server-only `DATABASE_URL`. Use the provider's documented TLS settings; never put the URL in a `VITE_` variable or browser code.
 2. Run `npm ci` and `npm run db:migrate` with that URL configured. The initial idempotent migration creates profile, comment and report tables. The server refuses to start with an unavailable/unmigrated configured database.
 3. Run `npm run build` and `npm start`. In live mode connect a wallet, explicitly approve the sign-in message, then save a profile or post on a mint's discussion.
-4. Test with two wallets/browsers, verify unauthorized deletion is rejected and configure backups and retention. The adapter has not been tested against a provisioned PostgreSQL instance on this machine.
+4. Test with two wallets/browsers, verify unauthorized deletion is rejected and configure backups and retention. Read-only connectivity/schema checks against the configured Render PostgreSQL instance passed on October 7, 2026. Actual PostgreSQL community writes, backup/restore and load tests remain outstanding; automated community write tests use the JSON fallback.
 
-Without `DATABASE_URL`, community data uses serialized JSON in `DATA_DIR`, for a single-process pilot only. PostgreSQL currently stores only community profiles/comments/reports; coin catalogue, upload references, auth sessions and rate limits still need migration before multi-instance deployment. There is no automatic import of local demo content or existing JSON community data. Keep a backup and perform a deliberate validated import when switching storage. No private keys or seed phrases are stored.
+Without `DATABASE_URL`, application data uses serialized JSON in `DATA_DIR`, for a single-process pilot only. Existing JSON is not automatically imported. `npm run db:import-catalogue` verifies a trusted backed-up catalogue against mainnet and performs a dry run; add `-- --apply` to import missing catalogue/upload records without overwriting database records. Community imports require a separate reviewed import. No private keys or seed phrases are stored.
+
+October 7 update: migrations `001-community.sql` and `002-app-records.sql` are required. Actual PostgreSQL persistence/concurrent-write and community authorization tests now pass. [AUDIT_REPORT.md](AUDIT_REPORT.md) supersedes older verification/checklist statements above and details remaining safety gaps. [DEPLOYMENT.md](DEPLOYMENT.md) gives current Render steps.
 
 ## Deployment
 

@@ -19,9 +19,16 @@ app.use((req, res, next) => {
   next();
 });
 app.get('/healthz', (req, res) => res.status(stopping ? 503 : 200).json({ status: stopping ? 'stopping' : 'ok' }));
-app.get('/readyz', (req, res) => res.status(stopping ? 503 : 200).json({ ready: !stopping, scope: 'process-and-storage' }));
 const api = createApi({ config: { ...process.env, LOCAL_SETUP_ENABLED: 'false' }, storageDir: directory });
 await api.locals.ready();
+app.get('/readyz', async (req, res) => {
+  try {
+    if (stopping) throw new Error('Stopping');
+    await api.locals.ready();
+    await access(directory, constants.R_OK | constants.W_OK);
+    res.json({ ready: true, scope: 'process-and-application-storage' });
+  } catch { res.status(503).json({ ready: false, scope: 'process-and-application-storage' }); }
+});
 app.use(api);
 app.use(express.static('dist'));
 const server = app.listen(port, '0.0.0.0', () => {

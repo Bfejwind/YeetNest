@@ -69,8 +69,37 @@ export function installLaunchpadUI(context) {
       }
     };
   }
-  if (page === "Creator Studio") creatorStudio(context);
+  if (page === "Creator Studio") {
+    creatorStudio(context);
+    let pending;
+    try { pending = JSON.parse(localStorage.getItem('yn-pending-registration') || 'null'); } catch { pending = null; }
+    if (mode === 'live' && pending?.wallet === chain.publicKey?.toBase58()) {
+      document.querySelector('.content').insertAdjacentHTML('beforeend', `<section class="setup-section"><div class="section-heading"><h2>Pending listing</h2><button class="secondary" id="recover-listing">${icon('refresh-cw')} Recover listing</button></div><a href="https://solscan.io/token/${esc(pending.mint)}" target="_blank" rel="noopener noreferrer">${esc(pending.mint)}</a></section>`);
+      document.querySelector('#recover-listing').onclick = async event => {
+        const button = event.currentTarget;
+        button.disabled = true;
+        try {
+          await chain.authenticate();
+          await chain.api('/coins', { method: 'POST', body: JSON.stringify(pending) });
+          localStorage.removeItem('yn-pending-registration');
+          context.toast('Confirmed on-chain ownership; listing recovered.');
+          context.reload();
+        } catch(error) { context.toast(error.message); button.disabled = false; }
+      };
+    }
+  }
   if (page === "Portfolio" && mode === "live" && chain.publicKey) {
+    document.querySelector('.content').insertAdjacentHTML('beforeend', `<section class="setup-section"><div class="section-heading"><h2>Transaction recovery</h2><button class="secondary" id="recover-transactions">${icon('refresh-cw')} Recheck</button></div><div id="transaction-recovery"></div></section>`);
+    document.querySelector('#recover-transactions').onclick = async event => {
+      const button = event.currentTarget;
+      const root = document.querySelector('#transaction-recovery');
+      button.disabled = true;
+      try {
+        const records = await chain.recoverTransactions();
+        if (root.isConnected) root.innerHTML = records.map(row => `<div class="health-check"><div><a href="https://solscan.io/tx/${esc(row.signature)}" target="_blank" rel="noopener noreferrer">${esc(row.signature.slice(0, 12))}</a><span>${esc(new Date(row.updated).toLocaleString())}</span></div><small>${esc(row.state)}</small></div>`).join('') || '<p class="muted">No recorded transactions in this browser.</p>';
+      } catch(error) { if (root.isConnected) root.textContent = error.message; }
+      finally { button.disabled = false; }
+    };
     document
       .querySelector(".market")
       .insertAdjacentHTML(
