@@ -1,5 +1,7 @@
 # YeetNest Implementation And Acceptance Report
 
+Latest revision: [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) records durable authorization, indexed curve endpoints, worker setup, actual test results and incomplete mainnet backfill/provider errors. Its evidence and feature table supersede older indexing/session notes below.
+
 Date: October 7, 2026. Applies to the workspace revision, not automatically to the deployed Render revision. This is an engineering assessment, not an independent security audit. Branding/logo and the existing dark/mint design were preserved.
 
 For step-by-step operator instructions and engineering acceptance criteria for every remaining item, see [AUDIT_ACTION_GUIDE.md](AUDIT_ACTION_GUIDE.md).
@@ -23,7 +25,7 @@ Program/address reference: [Raydium official program addresses](https://github.c
 
 The normal frontend calls same-origin `/api/*`, including `/api/rpc`; Render's Node server serves both frontend and backend. No browser provider key or separate frontend API host is needed. The static `build:hosted` alias intentionally disables mainnet connections; it must not be used on Render.
 
-Providers: configured Solana RPC; Jupiter Swap V2 for supported post-graduation routes; Pinata public IPFS media/metadata; DexScreener pool metrics; GeckoTerminal OHLCV/recent pool trades. PostgreSQL stores community records plus transactional JSONB application records for catalogue/upload references/watchlists. There is no durable global chain indexer or streaming backend. Token balances and settlement are read from Solana, never from editable app balance records.
+Providers: configured Solana RPC; Jupiter Swap V2 for supported post-graduation routes; Pinata public IPFS media/metadata; DexScreener pool metrics; GeckoTerminal OHLCV/recent pool trades. PostgreSQL stores community/application records, expiring authorization and finalized indexed launches/trades. A separate durable LaunchLab worker is implemented; provider -32015 errors occurred and a subsequent retry cycle passed, but full mainnet backfill and streaming remain unfinished. Token balances and settlement are read from Solana, never from editable app balance records.
 
 Demo mode deliberately uses browser-local sample coins, artwork, profiles and simulated trading. Connecting a wallet does not convert those samples into on-chain launches.
 
@@ -38,7 +40,7 @@ Demo mode deliberately uses browser-local sample coins, artwork, profiles and si
 | Extension-free Solflare Web | Partial/unverified | Official SDK connection surface loads; real provider approval/signing must be tested |
 | Phantom/Solflare phone QR | Working handoff | Opens deployed HTTPS site inside phone wallet; not remote desktop pairing |
 | Phantom embedded desktop login | Blocked | Requires an approved existing Phantom App ID/provider access; not silently substituted |
-| Wallet-signature sign-in | Working | Domain-bound five-minute single-use nonce; signature verification; one-hour memory session; restart signs out |
+| Wallet-signature sign-in | Working/tested | Domain-bound five-minute single-use nonce; signature verification; one-hour hashed PostgreSQL session; atomic cross-instance consumption/reopen tested |
 | SOL/SPL/Token-2022 holdings and wallet signatures | Implemented/unverified | Live RPC reads, refresh after confirmation; controlled browser checks; no computed trader P&L |
 | Name/symbol/description/social links/artwork | Working locally | Validation, image resize/static PNG conversion, signed-wallet upload; invalid input tests |
 | Public Pinata image/metadata | Partial/unverified | Auth diagnostic succeeds; upload builder/durable references implemented; real upload/public availability not exercised |
@@ -60,8 +62,8 @@ Demo mode deliberately uses browser-local sample coins, artwork, profiles and si
 | Pump-specific rewards/fee sharing/quote modes | Not implemented | These are not Raydium features; require a separate reviewed Pump integration and current program eligibility |
 | Trader leaderboards/P&L/social graph | Not implemented | Current leaderboard ranks loaded tokens, not trading profitability; no follows/block/account linking |
 | Livestreams/notifications/advanced orders | Not implemented | No streaming, notification worker, limit-order/copy-trade engine or proprietary Pump service access |
-| Global indexing/backfill/live updates | Not implemented | Current provider polling/cache is not an indexer; no durable event checkpoints/reorg recovery |
-| Multi-instance production readiness | Blocked | Memory sessions/quotes/limits; incomplete transaction policy, moderation, monitoring and independent audit |
+| Global indexing/backfill/live updates | Partial/unverified | Finalized worker, deduplication and durable cursors implemented/tested; provider -32015 errors encountered, latest retry passed; full backfill, streaming and independent migration reconciliation unfinished |
+| Multi-instance production readiness | Blocked | Sessions/quotes/IP and wallet limits durable; transaction policy, moderation, monitoring and independent audit unfinished |
 
 Pump's public contracts are the reference, not contracts used by this app. Current public documentation includes evolving v2 instructions and holder-reward/signed-reserve changes; old unsigned reserve implementations must not be reused blindly. A Pump integration would require pinning/reviewing its current IDL and deployed accounts, and tokens/protocol fees would belong to that ecosystem. No assumption was made that Pump exists on devnet. See [official Pump public docs](https://github.com/pump-fun/pump-public-docs), [Pump program](https://github.com/pump-fun/pump-public-docs/blob/main/docs/PUMP_PROGRAM_README.md), and [PumpSwap](https://github.com/pump-fun/pump-public-docs/blob/main/docs/PUMP_SWAP_README.md).
 
@@ -82,8 +84,8 @@ Jupiter API reference: [Order and execute](https://github.com/jup-ag/docs/blob/m
 
 | Check | Actual result |
 | --- | --- |
-| `npm test` | 19 passing backend/unit tests; integer math, auth replay, unauthorized actions, decoded PNG/malformed upload checks, controlled metadata persistence, reviewed message/signature, concurrency, confirmation states and instruction tampering |
-| `npm run test:ui` | 14 passing controlled browser tests; desktop/mobile, actual chart pixels, demo creation/artwork/trading, wallet discovery/handoff, shared API flows, stalled connection timeout/retry, late-approval isolation and duplicate connection prevention |
+| `npm test` | 20 passing backend/unit tests; integer math, auth replay, unauthorized actions, decoded PNG/malformed upload checks, controlled metadata persistence, reviewed message/signature, concurrency, confirmation states, operation deadlines and instruction tampering |
+| `npm run test:ui` | 16 passing controlled browser tests; desktop/mobile, actual chart pixels, demo creation/artwork/trading, wallet discovery/handoff, shared API flows, stalled connection/sign-in/preparation recovery, retained upload references, late-result isolation and duplicate connection prevention |
 | Real PostgreSQL integration | 2 passing tests; concurrent app writes/reopen, profile/comment persistence/reopen, unauthorized deletion; isolated fixtures cleaned up |
 | `npm run db:migrate` | Passed against configured database; additive community/application tables |
 | `npm run build` | Passed; large SDK chunk warning remains |
@@ -95,7 +97,7 @@ Jupiter API reference: [Order and execute](https://github.com/jup-ag/docs/blob/m
 | `npm audit --omit=dev` | 5 moderate findings through SDK/wallet-adapter dependency tree; no high/critical. Not resolved with incompatible forced major upgrades |
 | Lint/type checking | No configured lint/typecheck scripts; JavaScript project. Not claimed as performed |
 | Funded execution, actual public upload, live graduation | Not performed; requires explicit operator approval |
-| Indexer/restart/backfill recovery | No indexer exists; database reopen tested, not a deployed worker recovery test |
+| Indexer/restart/backfill recovery | Interrupted-scan/cursor restart tests and PostgreSQL deduplication/candles pass; full real backfill and deployed worker restart unverified |
 
 Tests use controlled provider/wallet responses where applicable, not hidden mainnet transactions. No real funds were spent, on-chain programs deployed or fee authorities changed. Database migrations/isolated integration fixtures were the only intentional external writes.
 

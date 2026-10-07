@@ -7,13 +7,15 @@
     "build": "vite build",
     "build:hosted": "vite build --mode hosted",
     "start": "node server/index.js",
+    "indexer": "node server/indexer.js",
     "db:migrate": "node server/migrate.js",
     "db:import-catalogue": "node server/import-catalogue.js",
-    "test": "node --test tests/amounts.test.js tests/api.test.js tests/app-store.test.js tests/buffers.test.js tests/wallet-links.test.js tests/transactions.test.js",
+    "test": "node --test tests/amounts.test.js tests/api.test.js tests/app-store.test.js tests/buffers.test.js tests/wallet-links.test.js tests/transactions.test.js tests/security-store.test.js tests/indexer.test.js",
     "test:postgres": "node --test tests/postgres.test.js",
     "test:ui": "playwright test"
   },
   "dependencies": {
+    "@coral-xyz/borsh": "0.32.1",
     "@dicebear/bottts-neutral": "^9.4.2",
     "@dicebear/core": "^9.4.3",
     "@raydium-io/raydium-sdk-v2": "0.2.64-alpha",

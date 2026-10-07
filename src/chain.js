@@ -11,6 +11,7 @@ import { findWalletProvider, requestWalletConnection } from "./wallet-provider.j
 import bs58 from 'bs58';
 import { pollTransaction, recordTransaction, readTransactions, TransactionOutcomeError } from './transaction-state.js';
 import { validateCurveInstruction } from './transaction-validation.js';
+import { withTimeout } from './async-timeout.js';
 
 globalThis.Buffer ||= Buffer;
 export const hostedDemo = import.meta.env.MODE === "hosted";
@@ -31,19 +32,27 @@ export async function api(path, options = {}) {
     if (path === "/status") return { network: "demo", jupiter: "offline", uploads: false, uploadProvider: "Not configured", rpc: "offline", hostedDemo: true };
     throw new Error("The online preview supports demo mode only. The mainnet backend is not deployed yet.");
   }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 90000);
+  try {
   const response = await fetch(`/api${path}`, {
     ...options,
+    signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal,
     headers: {
       "Content-Type": "application/json",
       ...(session ? { Authorization: `Bearer ${session}` } : {}),
       ...options.headers,
     },
   });
-  const data = await response.json().catch(() => ({}));
+  const data = await response.json().catch(error => { if (controller.signal.aborted) throw error; return {}; });
   if (response.status === 401) session = null;
   if (!response.ok)
     throw new Error(data.error || `Request failed (${response.status}).`);
   return data;
+  } catch(error) {
+    if (controller.signal.aborted) throw new Error(path === '/metadata' ? 'Metadata upload timed out. It may have completed on the provider; check Pinata before retrying.' : 'Server request timed out. Check the connection and server logs. For submitted transactions, recheck the signature before retrying.');
+    throw error;
+  } finally { clearTimeout(timer); }
 }
 
 export async function connectWallet(name) {
@@ -86,19 +95,23 @@ export async function authenticate() {
   if (session) return;
   if (!provider.signMessage)
     throw new Error("This wallet does not support creator sign-in.");
+  const signer = provider, owner = publicKey.toBase58();
   const challenge = await api("/auth/challenge", {
     method: "POST",
-    body: JSON.stringify({ wallet: publicKey.toBase58() }),
+    body: JSON.stringify({ wallet: owner }),
   });
-  const signed = await provider.signMessage(
+  if (provider !== signer || publicKey?.toBase58() !== owner) throw new Error('Wallet changed. Sign in again.');
+  const signed = await withTimeout(() => signer.signMessage(
     new TextEncoder().encode(challenge.message),
     "utf8",
-  );
+  ), 60000, 'Wallet sign-in timed out. Open Phantom/Solflare, unlock it and approve or reject the pending sign-in message, then try again. No launch transaction was submitted.');
+  if (provider !== signer || publicKey?.toBase58() !== owner) throw new Error('Wallet changed during sign-in.');
   const signature = Buffer.from(signed.signature || signed).toString("base64");
   const result = await api("/auth/verify", {
     method: "POST",
     body: JSON.stringify({ nonce: challenge.nonce, signature }),
   });
+  if (provider !== signer || publicKey?.toBase58() !== owner) throw new Error('Wallet changed during sign-in.');
   session = result.token;
 }
 
@@ -136,11 +149,11 @@ async function assertMainnet() {
 }
 
 export async function submitAndConfirm(transaction, context = {}) {
-  await assertMainnet();
+  await withTimeout(() => assertMainnet(), 30000, 'Mainnet RPC check timed out before signing. Check the RPC connection; no transaction was submitted by this request.');
   const owner = publicKey.toBase58();
   const signer = provider;
   const original = Buffer.from(transaction.message.serialize());
-  const signed = await signer.signTransaction(transaction);
+  const signed = await withTimeout(() => signer.signTransaction(transaction), 60000, 'Wallet transaction signing timed out. No transaction was broadcast by this request. Close the pending wallet prompt and recheck wallet activity before preparing again.');
   if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during signing.');
   if (!Buffer.from(signed.message.serialize()).equals(original))
     throw new Error("Wallet changed the transaction message.");
@@ -149,7 +162,7 @@ export async function submitAndConfirm(transaction, context = {}) {
   if (existing) throw new TransactionOutcomeError(signature, existing.state, 'This signed transaction was already attempted.');
   recordTransaction({ ...context, signature, wallet: owner, state: 'submitted', network: 'mainnet-beta' });
   try {
-    const returned = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 });
+    const returned = await withTimeout(() => connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 }), 30000, 'RPC broadcast timed out.');
     if (returned !== signature) throw new Error('RPC returned an unexpected signature.');
   } catch {
     recordTransaction({ signature, state: 'unknown' });
@@ -258,9 +271,11 @@ async function raydium() {
   return { sdk, instance };
 }
 
-export async function prepareLaunch({ name, ticker, uri }) {
+export async function prepareLaunch({ name, ticker, uri, onProgress = () => {} }) {
+  onProgress('Checking Solana mainnet...');
   await assertMainnet();
   const owner = publicKey.toBase58();
+  onProgress('Loading Raydium launch builder...');
   const { sdk, instance } = await raydium();
   const mint = Keypair.generate();
   const configId = sdk.getPdaLaunchpadConfigId(
@@ -269,10 +284,12 @@ export async function prepareLaunch({ name, ticker, uri }) {
     0,
     0,
   ).publicKey;
+  onProgress('Loading launch configuration...');
   const account = await connection.getAccountInfo(configId);
   if (!account?.owner.equals(sdk.LAUNCHPAD_PROGRAM))
     throw new Error("Raydium SOL launch configuration is unavailable.");
   const configInfo = sdk.LaunchpadConfig.decode(account.data);
+  onProgress('Building launch transactions...');
   const { transactions, extInfo } = await instance.launchpad.createLaunchpad({
     programId: sdk.LAUNCHPAD_PROGRAM,
     mintA: mint.publicKey,
@@ -292,6 +309,7 @@ export async function prepareLaunch({ name, ticker, uri }) {
     txVersion: sdk.TxVersion.V0,
   });
   for (const tx of transactions) {
+    onProgress('Simulating launch transactions...');
     const simulation = await connection.simulateTransaction(tx);
     if (simulation.value.err)
       throw new Error(

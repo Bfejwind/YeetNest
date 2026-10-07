@@ -3,7 +3,17 @@ import assert from 'node:assert/strict';
 import { pollTransaction, TransactionOutcomeError } from '../src/transaction-state.js';
 import { minimumOutput, toUnits } from '../src/amounts.js';
 import { validateCurveInstruction } from '../src/transaction-validation.js';
+import { withTimeout } from '../src/async-timeout.js';
 import { Keypair, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+
+test('operation deadlines resolve, preserve rejection and stop waiting for stalled work', async () => {
+  assert.equal(await withTimeout(() => Promise.resolve('ready'), 100, 'Timed out'), 'ready');
+  await assert.rejects(withTimeout(() => Promise.reject(new Error('Provider rejected')), 100, 'Timed out'), /Provider rejected/);
+  let resolve;
+  const pending = withTimeout(() => new Promise(done => { resolve = done; }), 5, 'Preparation timed out');
+  await assert.rejects(pending, error => error.code === 'OPERATION_TIMEOUT' && error.message === 'Preparation timed out');
+  resolve('late result');
+});
 
 test('confirmation distinguishes processed, confirmed, finalized, failed and unknown', async () => {
   const connection = values => ({ getSignatureStatuses: async () => ({ value: [values.shift()] }) });

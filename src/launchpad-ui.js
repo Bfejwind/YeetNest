@@ -271,14 +271,17 @@ export async function mountMarket(coin, { esc }) {
   root.innerHTML =
     '<div class="market-loading">Loading live pool data...</div>';
   try {
-    const result = await chain.api(`/market/${coin.mint}`);
+    const curve = Boolean(coin.poolId && coin.launchStatus !== 'Graduated');
+    const result = await chain.api(`${curve ? '/curve/' : '/market/'}${coin.mint}`);
     if (!root.isConnected) return;
     const pair = result.pair;
-    if (!pair) {
+    if (!curve && !pair) {
       root.innerHTML = `<p class="fine">${esc(result.chartError)}</p>`;
       return;
     }
-    root.innerHTML = `<div class="pool-metrics"><span>Price<b>${dollars(Number(pair.priceUsd))}</b></span><span>Liquidity<b>${dollars(pair.liquidity?.usd)}</b></span><span>24h trades<b>${(pair.txns?.h24?.buys || 0) + (pair.txns?.h24?.sells || 0)}</b></span></div><div class="chart-header"><b>Price / USD</b><span>1H · ${esc(pair.dexId)}</span></div><div class="token-chart" id="token-chart"></div>${result.chartError ? `<p class="fine">${esc(result.chartError)}</p>` : ""}<a class="source-link" href="https://dexscreener.com/solana/${esc(pair.pairAddress)}" target="_blank" rel="noopener noreferrer">Pool on DexScreener ${icon("external-link")}</a>`;
+    root.innerHTML = curve
+      ? `<div class="chart-header"><b>Price / SOL</b><span>5M · Finalized curve trades</span></div><div class="token-chart" id="token-chart"></div>${result.candles?.length ? '' : '<p class="fine">No curve trades have been indexed yet.</p>'}`
+      : `<div class="pool-metrics"><span>Price<b>${dollars(Number(pair.priceUsd))}</b></span><span>Liquidity<b>${dollars(pair.liquidity?.usd)}</b></span><span>24h trades<b>${(pair.txns?.h24?.buys || 0) + (pair.txns?.h24?.sells || 0)}</b></span></div><div class="chart-header"><b>Price / USD</b><span>1H · ${esc(pair.dexId)}</span></div><div class="token-chart" id="token-chart"></div>${result.chartError ? `<p class="fine">${esc(result.chartError)}</p>` : ""}<a class="source-link" href="https://dexscreener.com/solana/${esc(pair.pairAddress)}" target="_blank" rel="noopener noreferrer">Pool on DexScreener ${icon("external-link")}</a>`;
     createIcons({ icons });
     const candles = new Map();
     for (const candle of result.candles) {
@@ -325,6 +328,7 @@ export async function mountMarket(coin, { esc }) {
         wickUpColor: "#93c9b0",
         wickDownColor: "#ed9a8b",
         borderVisible: false,
+        ...(curve ? { priceFormat: { type: 'price', precision: 12, minMove: 0.000000000001 } } : {}),
       })
       .setData([...candles.values()].sort((a, b) => a.time - b.time));
     chart.timeScale().fitContent();

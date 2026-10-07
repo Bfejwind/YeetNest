@@ -30,3 +30,18 @@ services:
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
+  - type: worker
+    name: yeetnest-launchlab-indexer
+    runtime: node
+    plan: 0.5c-512mb
+    numInstances: 1
+    buildCommand: npm ci
+    startCommand: npm run indexer
+    preDeployCommand: npm run db:migrate
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SOLANA_RPC_URL
+        sync: false

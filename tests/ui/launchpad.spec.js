@@ -1,5 +1,74 @@
 import { test, expect } from '@playwright/test';
 import { Keypair, SystemProgram, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { PNG } from 'pngjs';
+
+async function openLiveLaunch(page, pendingSignIn = false) {
+  const wallet = Keypair.generate().publicKey.toBase58();
+  await page.addInitScript(({ wallet, pendingSignIn }) => {
+    window.phantom = { solana: {
+      connect: async () => ({ publicKey: { toString: () => wallet } }),
+      signMessage: () => pendingSignIn ? new Promise(resolve => { window.__lateSignIn = resolve; }) : Promise.resolve({ signature: new Uint8Array(64) }),
+      on: () => {},
+    } };
+  }, { wallet, pendingSignIn });
+  await page.route('**/api/status', r => r.fulfill({ json: { network: 'mainnet-beta', uploads: true } }));
+  await page.route('**/api/tokens*', r => r.fulfill({ json: [] }));
+  await page.route('**/api/launches*', r => r.fulfill({ json: [] }));
+  await page.route('**/api/auth/challenge', r => r.fulfill({ json: { nonce: 'controlled', message: 'Controlled sign-in' } }));
+  await page.route('**/api/auth/verify', r => r.fulfill({ json: { token: 'controlled-session' } }));
+  await page.goto('/');
+  await page.locator('[data-mode="live"]').click();
+  await page.locator('#wallet').click();
+  await page.locator('[data-wallet="Phantom"]').click();
+  await page.locator('header').getByRole('button', { name: /Connect wallet/ }).waitFor({ state: 'hidden' });
+  await page.locator('[data-launch]').first().click();
+  await page.getByLabel('Coin name').fill('Timeout Test');
+  await page.getByLabel('Ticker', { exact: true }).fill('TIME');
+  await page.locator('#coin-image').setInputFiles({ name: 'test.png', mimeType: 'image/png', buffer: PNG.sync.write({ width: 1, height: 1, data: Buffer.from([255, 0, 0, 255]) }) });
+  await expect(page.locator('#upload-preview img')).toBeVisible();
+}
+
+test('live launch identifies stalled sign-in and restores preparation without uploading', async ({ page }) => {
+  let uploads = 0;
+  await page.route('**/api/metadata', r => { uploads++; return r.fulfill({ json: {} }); });
+  await page.route('**/api/rpc', r => r.fulfill({ json: { jsonrpc: '2.0', id: r.request().postDataJSON().id, result: { context: { slot: 1 }, value: [] } } }));
+  await openLiveLaunch(page, true);
+  await page.clock.install();
+  await page.getByRole('button', { name: 'Prepare live launch', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Waiting for wallet sign-in...' })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => typeof window.__lateSignIn)).toBe('function');
+  await page.clock.fastForward(61000);
+  await expect(page.locator('#form-error')).toContainText('Wallet sign-in timed out');
+  await expect(page.getByRole('button', { name: 'Prepare live launch', exact: true })).toBeEnabled();
+  expect(uploads).toBe(0);
+  await page.evaluate(() => window.__lateSignIn({ signature: new Uint8Array(64) }));
+  expect(uploads).toBe(0);
+  await expect(page.locator('#sign-launch')).toHaveCount(0);
+});
+
+test('launch preparation timeout keeps completed metadata and ignores late RPC completion', async ({ page }) => {
+  let uploads = 0, heldRoute, genesisCalls = 0;
+  await page.route('**/api/metadata', r => { uploads++; return r.fulfill({ json: { uri: 'https://gateway.pinata.cloud/ipfs/TestMetadata', image: 'https://gateway.pinata.cloud/ipfs/TestImage' } }); });
+  await page.route('**/api/rpc', r => {
+    const { method, id } = r.request().postDataJSON();
+    if (method === 'getGenesisHash' && ++genesisCalls === 1) { heldRoute = r; return; }
+    return r.fulfill({ json: { jsonrpc: '2.0', id, result: method === 'getGenesisHash' ? 'wrong-network' : { context: { slot: 1 }, value: method === 'getBalance' ? 1000000000 : [] } } });
+  });
+  await openLiveLaunch(page);
+  await page.clock.install();
+  await page.getByRole('button', { name: 'Prepare live launch', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Checking Solana mainnet...' })).toBeVisible();
+  await expect.poll(() => Boolean(heldRoute)).toBe(true);
+  await page.clock.fastForward(91000);
+  await expect(page.locator('#form-error')).toContainText('Launch preparation timed out');
+  await expect(page.getByRole('button', { name: 'Prepare live launch', exact: true })).toBeEnabled();
+  const id = heldRoute.request().postDataJSON().id;
+  await heldRoute.fulfill({ json: { jsonrpc: '2.0', id, result: '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d' } });
+  await page.getByRole('button', { name: 'Prepare live launch', exact: true }).click();
+  await expect(page.locator('#form-error')).toContainText('not Solana mainnet');
+  expect(uploads).toBe(1);
+  await expect(page.locator('#sign-launch')).toHaveCount(0);
+});
 
 test('live candles render and creator studio is usable on desktop and mobile', async ({ page }) => {
   const mint = Keypair.generate().publicKey.toBase58();
@@ -24,6 +93,32 @@ test('live candles render and creator studio is usable on desktop and mobile', a
   await page.getByRole('button', { name: 'Creator Studio', exact: true }).click();
   await expect(page.locator('.content')).toContainText('CREATOR STUDIO');
   await expect(page.locator('.studio-coin')).toHaveCount(0);
+});
+
+test('indexed curve chart and source filters do not mistake migration for graduation', async ({ page }) => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  const migrated = Keypair.generate().publicKey.toBase58();
+  await page.route('**/api/tokens*', route => route.fulfill({ json: [] }));
+  await page.route('**/api/launches', route => route.fulfill({ json: [] }));
+  await page.route('**/api/launches/indexed*', route => route.fulfill({ json: { coins: [
+    { id: mint, mint, poolId: mint, name: 'Curve fixture', ticker: 'CURVE', pair: 'SOL', progress: 100, launchStatus: 'Migrating', source: 'External LaunchLab', decimals: 6 },
+    { id: migrated, mint: migrated, poolId: migrated, name: 'Graduated fixture', ticker: 'DONE', pair: 'SOL', progress: 100, launchStatus: 'Graduated', source: 'External LaunchLab', decimals: 6 },
+  ], hasMore: false } }));
+  await page.route('**/api/curve/*', route => route.fulfill({ json: { candles: [[1700000000, .00001, .00002, .000005, .000015, 3]], available: true, currency: 'SOL' } }));
+  await page.goto('/');
+  await page.locator('[data-mode="live"]').click();
+  await expect(page.locator('.coin')).toHaveCount(2);
+  await page.locator('[data-category="YeetNest"]').click();
+  await expect(page.locator('.coin')).toHaveCount(0);
+  await page.locator('[data-category="LaunchLab"]').click();
+  await expect(page.locator('.coin')).toHaveCount(2);
+  await page.locator('[data-tab="Graduated"]').click();
+  await expect(page.locator('.coin')).toHaveCount(1);
+  await expect(page.locator('.coin')).toContainText('Graduated fixture');
+  await page.locator('[data-tab="Trending"]').click();
+  await page.locator(`[data-coin="${mint}"]`).click();
+  await expect(page.locator('#live-market')).toContainText('Price / SOL');
+  await expect(page.locator('#token-chart canvas').first()).toBeVisible();
 });
 
 test('creator artwork persists, can be changed, and demo funds are accounted for', async ({ page }) => {

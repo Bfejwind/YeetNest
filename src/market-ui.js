@@ -51,7 +51,7 @@ export function installMarketUI(context) {
       const groups = [
         ['New pairs', available.filter(c => c.progress != null && c.progress < 65).sort((a,b) => (b.created || Number(b.id) || 0) - (a.created || Number(a.id) || 0))],
         ['About to graduate', available.filter(c => c.progress >= 65 && c.progress < 100).sort((a,b) => b.progress-a.progress)],
-        ['Graduated', available.filter(c => c.progress >= 100 || c.launchStatus === 'Graduated')],
+        ['Graduated', available.filter(c => mode === 'demo' ? c.progress >= 100 : c.launchStatus === 'Graduated')],
       ];
       content.querySelector('.terminal-board').innerHTML = groups.map(([name, values]) => `<section class="terminal-column"><div class="terminal-heading"><h2>${name}</h2><span>${values.length}</span></div>${values.map(c => `<button class="terminal-coin" data-open-coin="${esc(c.id)}"><img src="${esc(image(c))}" alt=""/><div><strong>${esc(c.name)}</strong><span>$${esc(c.ticker)}</span><small>MC ${money(c.cap)} · Vol ${money(c.volume)}</small><div class="progress"><span style="width:${Math.max(0, Math.min(c.progress || 0, 100))}%"></span></div></div><b class="${c.change < 0 ? 'negative' : 'change'}">${c.change == null ? '--' : `${c.change.toFixed(2)}%`}</b></button>`).join('') || '<p class="board-empty">No matching pairs.</p>'}</section>`).join('');
       content.querySelectorAll('[data-open-coin]').forEach(b => b.onclick = () => openCoin(b.dataset.openCoin));

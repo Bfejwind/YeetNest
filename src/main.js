@@ -9,6 +9,7 @@ import "./dark-theme.css";
 import "./pump-theme.css";
 import { installMarketUI, mountDiscussion } from "./market-ui.js";
 import { walletBrowseLink } from './wallet-links.js';
+import { withTimeout } from './async-timeout.js';
 
 const I = (name) => `<i data-lucide="${name}"></i>`;
 const esc = (value) =>
@@ -159,14 +160,17 @@ function filtered() {
             .toLowerCase()
             .includes(query.toLowerCase())) &&
         (category === "All coins" ||
-          (category === "Stocks"
+          (mode === 'live' && category === 'YeetNest' && t.source === 'YeetNest') ||
+          (mode === 'live' && category === 'LaunchLab' && Boolean(t.poolId)) ||
+          (mode === 'live' && category === 'Market' && !t.poolId) ||
+          (mode === 'demo' && (category === "Stocks"
             ? t.pair.endsWith("x")
             : category === "Crypto"
               ? ["SOL", "USDC"].includes(t.pair)
-              : ["OPENAI", "ANTHROPIC"].includes(t.pair))) &&
+              : ["OPENAI", "ANTHROPIC"].includes(t.pair)))) &&
         (tab !== "About to graduate" ||
-          (t.progress >= 65 && t.progress < 100)) &&
-        (tab !== "Graduated" || t.progress >= 100),
+          (t.progress >= 65 && t.progress < 100 && (mode === 'demo' || t.launchStatus === 'Trading'))) &&
+        (tab !== "Graduated" || (mode === 'demo' ? t.progress >= 100 : t.launchStatus === 'Graduated')),
     )
     .sort((a, b) =>
       tab === "New pairs"
@@ -240,7 +244,7 @@ function render() {
     )
     .join("")}</section>
   ${page === "Explore" ? `<section class="feature"><div class="feature-copy"><span class="label">${mode === "demo" ? "FROM THE NEST" : "MARKET SPOTLIGHT"}</span><h2>${spotlight ? esc(spotlight.name) : "Ready for takeoff."}</h2><p>${mode === "demo" ? "One small meme. A whole new flock." : spotlight ? `${esc(spotlight.source)} · ${spotlight.verified ? "Verified token" : "Check the mint address"}` : "Explore on-chain coins or hatch your own."}</p><button id="spotlight">${spotlight ? `Explore $${esc(spotlight.ticker)}` : "Explore live coins"} ${I("arrow-up-right")}</button></div><div class="feature-art">${spotlight ? art(spotlight) : `<div class="empty-art">${I("egg")}</div>`}<span class="floating-tag tag-one">${I("feather")} JUST HATCHED</span><span class="floating-tag tag-two">${spotlight?.change != null ? `${spotlight.change > 0 ? "+" : ""}${spotlight.change.toFixed(2)}%` : "YEETNEST"} ${I("arrow-up-right")}</span></div><div class="feature-market"><span class="label">${spotlight?.cap != null ? "MARKET CAP" : "YOUR NEXT LAUNCH"}</span><strong>${spotlight?.cap != null ? money(spotlight.cap) : "Starts here."}</strong><p>${mode === "demo" ? "Sample market" : "Provider market data"}</p><div class="nest-lines">${I("bird")}${I("move-up-right")}</div><span class="paired">${spotlight?.mint ? `<a href="https://solscan.io/token/${esc(spotlight.mint)}" target="_blank" rel="noopener noreferrer">${esc(short(spotlight.mint))} ${I("external-link")}</a>` : "Hatch something worth watching."}</span></div></section>` : ""}
-  <section class="market"><div class="market-heading"><h2>${page === "Explore" ? "Fresh from the nest" : page}</h2><span class="live-label"><span class="live-dot"></span> ${mode === "demo" ? "Sample market" : lastUpdated ? `Updated ${new Date(lastUpdated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Provider data"}</span><button id="refresh" class="icon-button" title="Refresh market">${I("refresh-cw")}</button></div><div class="tabs">${["Trending", "New pairs", "About to graduate", "Graduated"].map((n) => `<button class="${tab === n ? "selected" : ""}" data-tab="${n}">${I(n === "Trending" ? "flame" : n === "New pairs" ? "sparkles" : n === "About to graduate" ? "graduation-cap" : "badge-check")}${n}</button>`).join("")}<div class="view-switch"><button data-view="grid" title="Grid view" class="${view === "grid" ? "selected" : ""}">${I("layout-grid")}</button><button data-view="list" title="List view" class="${view === "list" ? "selected" : ""}">${I("list")}</button></div></div><div class="filters"><div class="categories">${["All coins", "Stocks", "Crypto", "Pre-IPO"].map((n) => `<button data-category="${n}" class="${category === n ? "chosen" : ""}">${n}</button>`).join("")}</div><div class="search-sort"><label class="search">${I("search")}<input id="search" aria-label="Search coins" placeholder="Search coins or mint address" value="${esc(query)}"/></label><label class="sort">${I("arrow-down-wide-narrow")}<select id="sort" aria-label="Sort coins"><option>Trending</option><option>Market cap</option><option>Volume</option><option>Top gainers</option></select></label></div></div>${liveError && mode === "live" ? `<div class="notice error">${I("circle-alert")}<span>${esc(liveError)}</span><button id="retry">Retry</button></div>` : ""}${mode === "live" && page === "Portfolio" && !chain.publicKey ? `<div class="notice">${I("wallet")} Connect a wallet to load your real holdings.</div>` : ""}<div id="coins" class="coins ${view}"></div></section>`
+<section class="market"><div class="market-heading"><h2>${page === "Explore" ? "Fresh from the nest" : page}</h2><span class="live-label"><span class="live-dot"></span> ${mode === "demo" ? "Sample market" : lastUpdated ? `Updated ${new Date(lastUpdated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Provider data"}</span><button id="refresh" class="icon-button" title="Refresh market">${I("refresh-cw")}</button></div><div class="tabs">${["Trending", "New pairs", "About to graduate", "Graduated"].map((n) => `<button class="${tab === n ? "selected" : ""}" data-tab="${n}">${I(n === "Trending" ? "flame" : n === "New pairs" ? "sparkles" : n === "About to graduate" ? "graduation-cap" : "badge-check")}${n}</button>`).join("")}<div class="view-switch"><button data-view="grid" title="Grid view" class="${view === "grid" ? "selected" : ""}">${I("layout-grid")}</button><button data-view="list" title="List view" class="${view === "list" ? "selected" : ""}">${I("list")}</button></div></div><div class="filters"><div class="categories">${(mode === "live" ? ["All coins", "YeetNest", "LaunchLab", "Market"] : ["All coins", "Stocks", "Crypto", "Pre-IPO"]).map((n) => `<button data-category="${n}" class="${category === n ? "chosen" : ""}">${n}</button>`).join("")}</div><div class="search-sort"><label class="search">${I("search")}<input id="search" aria-label="Search coins" placeholder="Search coins or mint address" value="${esc(query)}"/></label><label class="sort">${I("arrow-down-wide-narrow")}<select id="sort" aria-label="Sort coins"><option>Trending</option><option>Market cap</option><option>Volume</option><option>Top gainers</option></select></label></div></div>${liveError && mode === "live" ? `<div class="notice error">${I("circle-alert")}<span>${esc(liveError)}</span><button id="retry">Retry</button></div>` : ""}${mode === "live" && page === "Portfolio" && !chain.publicKey ? `<div class="notice">${I("wallet")} Connect a wallet to load your real holdings.</div>` : ""}<div id="coins" class="coins ${view}"></div></section>`
     }<footer><span>${I("feather")} A little chaos. A lot of possibility.</span><span>${mode === "demo" ? "Demo environment" : "Solana · Jupiter · Raydium"} ${I("arrow-up-right")}</span></footer></div></main><div id="modal-root"></div><div id="toast" role="status"></div>`;
   if (page !== "Integrations") {
     document.querySelector("#sort").value = sort;
@@ -406,9 +410,13 @@ function drawCoins() {
     };
   });
   document.querySelector('#discovery-pagination')?.remove();
-  container.insertAdjacentHTML('afterend', `<div id="discovery-pagination" class="discovery-pagination"><button class="icon-button" id="previous-coins" title="Previous page" ${discoveryPage === 0 ? 'disabled' : ''}>${I('chevron-left')}</button><span>${discoveryPage + 1} / ${pages}</span><button class="icon-button" id="next-coins" title="Next page" ${discoveryPage + 1 >= pages ? 'disabled' : ''}>${I('chevron-right')}</button></div>`);
+  container.insertAdjacentHTML('afterend', `<div id="discovery-pagination" class="discovery-pagination"><button class="icon-button" id="previous-coins" title="Previous page" ${discoveryPage === 0 ? 'disabled' : ''}>${I('chevron-left')}</button><span>${discoveryPage + 1} / ${pages}${mode === 'live' && liveIndexHasMore ? '+' : ''}</span><button class="icon-button" id="next-coins" title="Next page" ${loading || (discoveryPage + 1 >= pages && !(mode === 'live' && liveIndexHasMore)) ? 'disabled' : ''}>${I('chevron-right')}</button></div>`);
   document.querySelector('#previous-coins').onclick = () => { discoveryPage--; drawCoins(); };
-  document.querySelector('#next-coins').onclick = () => { discoveryPage++; drawCoins(); };
+  document.querySelector('#next-coins').onclick = async () => {
+    if (mode === 'live' && discoveryPage + 1 >= pages && liveIndexHasMore) await loadMoreIndexed();
+    if (discoveryPage + 1 < Math.ceil(filtered().length / 24)) discoveryPage++;
+    drawCoins();
+  };
   document.querySelectorAll("[data-save]").forEach((el) => {
     el.onclick = async (e) => {
       e.stopPropagation();
@@ -547,6 +555,22 @@ async function refreshStatusAndMarket() {
   else render();
 }
 let liveRequest = 0;
+let liveIndexOffset = 0, liveIndexHasMore = false;
+async function loadMoreIndexed() {
+  const expectedQuery = query, expectedRequest = liveRequest;
+  loading = true;
+  drawCoins();
+  try {
+    const result = await chain.api(`/launches/indexed?query=${encodeURIComponent(expectedQuery)}&offset=${liveIndexOffset}&limit=100`);
+    if (query !== expectedQuery || liveRequest !== expectedRequest || mode !== 'live') return;
+    const merged = new Map(liveCoins.map(coin => [coin.mint, coin]));
+    for (const coin of result.coins || []) merged.set(coin.mint, { ...merged.get(coin.mint), ...coin });
+    liveCoins = [...merged.values()];
+    liveIndexOffset += (result.coins || []).length;
+    liveIndexHasMore = Boolean(result.hasMore);
+  } catch (error) { toast(error.message); }
+  finally { if (liveRequest === expectedRequest) loading = false; }
+}
 async function refreshLive(background = false) {
   if (background && loading) return;
   const request = ++liveRequest,
@@ -557,6 +581,7 @@ async function refreshLive(background = false) {
   const results = await Promise.allSettled([
     chain.api(`/tokens?query=${encodeURIComponent(requestedQuery)}`),
     chain.api("/launches"),
+    chain.api(`/launches/indexed?query=${encodeURIComponent(requestedQuery)}&limit=100`),
   ]);
   if (request !== liveRequest) return;
   if (requestedQuery !== query) {
@@ -569,7 +594,10 @@ async function refreshLive(background = false) {
       ? results[0].value.map(tokenFromApi)
       : [];
   const registered = results[1].status === "fulfilled" ? results[1].value : [];
+  liveIndexOffset = results[2].status === 'fulfilled' ? (results[2].value.coins || []).length : 0;
+  liveIndexHasMore = results[2].status === 'fulfilled' && Boolean(results[2].value.hasMore);
   const merged = new Map(remote.map((c) => [c.mint, c]));
+  if (results[2].status === 'fulfilled') for (const c of results[2].value.coins || []) merged.set(c.mint, { ...merged.get(c.mint), ...c });
   for (const c of registered)
     merged.set(c.mint, { ...merged.get(c.mint), ...c });
   for (const holding of liveHoldings)
@@ -587,7 +615,8 @@ async function refreshLive(background = false) {
         },
       );
   liveCoins = [...merged.values()];
-  if (results[0].status === "rejected") liveError = results[0].reason.message;
+  liveError = results.filter(result => result.status === 'rejected').map(result => result.reason.message).join(' ');
+  if (results[2].status === 'fulfilled' && results[2].value.indexerError) liveError += ' LaunchLab indexing is paused at a provider error; indexed history is incomplete.';
   loading = false;
   lastUpdated = results[0].status === "fulfilled" ? Date.now() : lastUpdated;
   if (mode === "live" && !document.querySelector(".overlay")) {
@@ -791,6 +820,7 @@ async function normalizeImage(file) {
 }
 function launch() {
   let uploaded = "";
+  let uploadedMetadata = null, uploadedMetadataKey = '';
   modal(
     `<span class="eyebrow">${mode === "demo" ? "DEMO LAUNCH" : "RAYDIUM / MAINNET"}</span><h2>Hatch your coin.</h2><form id="launch-form"><label class="upload-control"><span class="upload-preview" id="upload-preview">${I("image-plus")}</span><span>Coin artwork<small>PNG, JPEG, WebP, GIF · up to 5 MB</small></span><input id="coin-image" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" ${mode === "live" ? "required" : ""}/></label><div class="form-row"><label>Coin name<input name="name" required maxlength="32" placeholder="Your next big idea"/></label><label>Ticker<input name="ticker" required maxlength="10" pattern="[A-Za-z0-9]+" placeholder="YEET"/></label></div><label>Description<textarea name="description" maxlength="500" placeholder="Give your flock a story."></textarea></label>${mode === "demo" ? `<div class="form-row"><label>Quote asset<select name="pair"><option>SOL</option><option>USDC</option><option>NVDAx</option><option>SPYx</option><option>TSLAx</option><option>QQQx</option><option>OPENAI</option><option>ANTHROPIC</option></select></label><label>Launch type<select name="launchMode"><option>Standard</option></select></label></div><p class="fine">Local demo launch. No on-chain token is created.</p>` : `<div class="launch-terms"><span>Quote asset <b>SOL</b></span><span>Launch mode <b>Standard</b></span><span>Migration <b>Raydium CPMM</b></span><span>Initial buy <b>None</b></span></div><p class="fine">Public IPFS artwork and metadata. Raydium default economics apply. Network fees are paid by your wallet.</p>${!config?.uploads ? `<div class="notice">${I("key-round")} Configure server PINATA_JWT to enable public uploads.</div>` : ""}`}<p class="form-error" id="form-error" role="alert"></p><button class="primary full" type="submit">${I("egg")} ${mode === "demo" ? "Hatch demo coin" : "Prepare live launch"}</button></form>`,
     () => {
@@ -821,6 +851,7 @@ function launch() {
         const form = e.target,
           button = form.querySelector("[type=submit]"),
           d = Object.fromEntries(new FormData(form));
+        if (button.disabled) return;
         button.disabled = true;
         try {
           if (mode === "demo") {
@@ -863,29 +894,43 @@ function launch() {
               throw new Error(
                 "Configure Pinata or a public HTTPS upload domain in Integrations.",
               );
-            button.textContent = "Uploading metadata...";
+            const owner = chain.publicKey.toBase58();
+            button.textContent = "Waiting for wallet sign-in...";
             await chain.authenticate();
-            const metadata = await chain.api("/metadata", {
+            if (!form.isConnected) return;
+            const fields = {
+              name: d.name, ticker: d.ticker.toUpperCase(), description: d.description,
+              image: uploaded, website: d.website, twitter: d.twitter, telegram: d.telegram,
+            };
+            const metadataKey = JSON.stringify({ owner, ...fields });
+            button.textContent = "Uploading artwork and metadata...";
+            if (!uploadedMetadata || uploadedMetadataKey !== metadataKey) {
+              uploadedMetadata = await chain.api("/metadata", {
               method: "POST",
-              body: JSON.stringify({
-                name: d.name,
-                ticker: d.ticker.toUpperCase(),
-                description: d.description,
-                image: uploaded,
-                website: d.website,
-                twitter: d.twitter,
-                telegram: d.telegram,
-              }),
+              body: JSON.stringify(fields),
             });
+              uploadedMetadataKey = metadataKey;
+            }
+            const metadata = uploadedMetadata;
+            if (!form.isConnected) return;
             button.textContent = "Building and simulating launch...";
-            const prepared = await chain.prepareLaunch({
+            let activePreparation = true, prepared;
+            try { prepared = await withTimeout(() => chain.prepareLaunch({
               name: d.name,
               ticker: d.ticker.toUpperCase(),
               uri: metadata.uri,
-            });
+              onProgress: message => {
+                if (!activePreparation || !form.isConnected) throw new Error('Launch preparation was cancelled.');
+                button.textContent = message;
+              },
+            }), 90000, 'Launch preparation timed out while loading or simulating through RPC/Raydium. No launch transaction was submitted. Check provider connections; completed metadata is retained for retry.'); }
+            finally { activePreparation = false; }
+            if (!form.isConnected) return;
+            if (chain.publicKey?.toBase58() !== owner) throw new Error('Wallet changed. Prepare the launch again.');
             reviewLaunch(prepared, metadata, d);
           }
         } catch (error) {
+          if (!form.isConnected) return;
           inlineError(error);
           button.disabled = false;
           button.textContent =

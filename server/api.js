@@ -11,6 +11,8 @@ import { createCommunityStore } from "./community-store.js";
 import { installCommunity } from "./community.js";
 import { createAppStore } from './app-store.js';
 import { PNG } from 'pngjs';
+import { createSecurityStore } from './security-store.js';
+import { createChainIndexStore } from './chain-index-store.js';
 
 const address = (value) => {
   try {
@@ -59,14 +61,19 @@ export function createApi({
   app.set('trust proxy', proxyHops);
   const community = createCommunityStore({ databaseUrl: config.DATABASE_URL, directory: storageDir });
   const persisted = createAppStore({ databaseUrl: config.DATABASE_URL, directory: storageDir });
-  app.locals.ready = () => Promise.all([community.ready(), persisted.ready()]);
-  app.locals.close = () => Promise.all([community.close(), persisted.close()]);
-  const challenges = new Map(),
-    sessions = new Map(),
-    orders = new Map(),
-    limits = new Map();
-  const uploadLimits = new Map(),
-    marketCache = new Map();
+  const security = createSecurityStore(persisted, Date.now, config.DATABASE_URL);
+  const chainIndex = createChainIndexStore(config.DATABASE_URL);
+  let lastSecurityPrune = 0;
+  app.locals.ready = async () => {
+    await Promise.all([community.ready(), persisted.ready(), security.ready(), chainIndex?.ready()]);
+    if (Date.now() - lastSecurityPrune > 60000) {
+      await security.prune();
+      lastSecurityPrune = Date.now();
+    }
+  };
+  app.locals.close = () => Promise.all([community.close(), persisted.close(), security.close(), chainIndex?.close()]);
+  const limits = new Map();
+  const marketCache = new Map();
   const images = new Map();
   const imageHosts = new Set([
     "ipfs.io",
@@ -137,9 +144,9 @@ export function createApi({
         ...options.headers,
       },
     });
-  const auth = (req) => {
+  const auth = async (req) => {
     const token = req.headers.authorization?.replace(/^Bearer /, "");
-    const session = sessions.get(token);
+    const session = token && await security.get('session', token);
     if (!session || session.expires < Date.now())
       throw fail("Sign in with your creator wallet again.", 401);
     return session.wallet;
@@ -170,15 +177,13 @@ export function createApi({
       throw fail("Upload provider returned an invalid CID.", 502);
     return `${config.IPFS_GATEWAY || "https://gateway.pinata.cloud/ipfs/"}${result.data.cid}`;
   }
-  app.use("/api", (req, res, next) => {
+  app.use("/api", async (req, res, next) => {
     const origin = req.headers.origin;
     if (origin && new URL(origin).host !== req.headers.host)
       return res
         .status(403)
         .json({ error: "Cross-origin API requests are not allowed." });
     const now = Date.now();
-    for (const map of [challenges, sessions, orders, uploadLimits])
-      for (const [key, value] of map) if (value.expires < now) map.delete(key);
     for (const [key, value] of limits)
       if (value.reset < now) limits.delete(key);
     if (limits.size > 10000)
@@ -192,14 +197,16 @@ export function createApi({
       return res
         .status(429)
         .json({ error: "Too many requests. Try again in one minute." });
+    if (await security.rate('ip-rate', key, 60000) > 180)
+      return res.status(429).json({ error: 'Too many requests. Try again in one minute.' });
     res.setHeader("Cache-Control", "no-store");
     next();
   });
   app.use("/api", express.json({ limit: "4mb" }));
-  installCommunity(app, { store: community, auth, address, text, route, fail });
-  app.get('/api/watchlist', route(async (req, res) => res.json(await persisted.get(`watchlist:${auth(req)}`))));
+  installCommunity(app, { store: community, auth, security, address, text, route, fail });
+  app.get('/api/watchlist', route(async (req, res) => res.json(await persisted.get(`watchlist:${await auth(req)}`))));
   app.put('/api/watchlist', route(async (req, res) => {
-    const wallet = auth(req);
+    const wallet = await auth(req);
     if (!Array.isArray(req.body.mints) || req.body.mints.length > 200) throw fail('Watchlist must contain at most 200 mints.');
     const mints = [...new Set(req.body.mints.map(address))];
     await persisted.mutate(`watchlist:${wallet}`, values => { values.splice(0, values.length, ...mints); });
@@ -363,15 +370,14 @@ export function createApi({
       const nonce = randomBytes(24).toString("hex");
       const domain = text(req.headers.host || '', 255);
       const message = `YeetNest creator sign-in\nDomain: ${domain}\nWallet: ${wallet}\nNonce: ${nonce}\nExpires: ${new Date(Date.now() + 300000).toISOString()}\nThis is a sign-in message, not a transaction.`;
-      challenges.set(nonce, { wallet, message, domain, expires: Date.now() + 300000 });
+      await security.put('challenge', nonce, { wallet, message, domain, expires: Date.now() + 300000 });
       res.json({ nonce, message });
     }),
   );
   app.post(
     "/api/auth/verify",
     route(async (req, res) => {
-      const challenge = challenges.get(req.body.nonce);
-      challenges.delete(req.body.nonce);
+      const challenge = await security.take('challenge', req.body.nonce);
       if (!challenge || challenge.expires < Date.now() || challenge.domain !== req.headers.host)
         throw fail("Sign-in challenge expired.", 401);
       const signature = Buffer.from(String(req.body.signature), "base64");
@@ -385,7 +391,7 @@ export function createApi({
       )
         throw fail("Invalid wallet signature.", 401);
       const token = randomBytes(32).toString("hex");
-      sessions.set(token, {
+      await security.put('session', token, {
         wallet: challenge.wallet,
         expires: Date.now() + 3600000,
       });
@@ -395,16 +401,9 @@ export function createApi({
   app.post(
     "/api/metadata",
     route(async (req, res) => {
-      const wallet = auth(req);
-      const rate = uploadLimits.get(wallet);
-      if (rate && rate.expires > Date.now() && rate.count >= 8)
+      const wallet = await auth(req);
+      if (await security.rate('upload-rate', wallet, 3600000) > 8)
         throw fail("Upload limit reached. Try again in an hour.", 429);
-      uploadLimits.set(
-        wallet,
-        rate && rate.expires > Date.now()
-          ? { ...rate, count: rate.count + 1 }
-          : { count: 1, expires: Date.now() + 3600000 },
-      );
       const name = text(req.body.name, 32),
         symbol = text(req.body.ticker, 10),
         description = text(req.body.description || "", 500);
@@ -479,7 +478,7 @@ export function createApi({
   app.post(
     "/api/coins",
     route(async (req, res) => {
-      const creator = auth(req),
+      const creator = await auth(req),
         mint = address(req.body.mint),
         poolId = address(req.body.poolId);
       const metadata = await metadataFor(creator, req.body.uri);
@@ -528,7 +527,7 @@ export function createApi({
   app.patch(
     "/api/coins/:mint/image",
     route(async (req, res) => {
-      const creator = auth(req),
+      const creator = await auth(req),
         mint = address(req.params.mint),
         metadata = await metadataFor(creator, req.body.uri);
       if (!metadata || metadata.wallet !== creator)
@@ -599,6 +598,10 @@ export function createApi({
   }));
   app.get('/api/trades/:mint', route(async (req, res) => {
     const mint = address(req.params.mint);
+    if (chainIndex && await chainIndex.getLaunch(mint)) {
+      const rows = await chainIndex.trades(mint);
+      return res.json({ trades: rows.map(row => ({ kind: row.side, tx_hash: row.signature, block_timestamp: row.block_time ? new Date(Number(row.block_time) * 1000).toISOString() : null, baseAmountRaw: row.base_amount, quoteAmountRaw: row.quote_amount, feeAmountRaw: row.fee_amount, decimals: row.decimals, slot: Number(row.slot) })), source: 'Finalized LaunchLab events', scope: 'indexed-curve-trades-not-complete-history', updatedAt: Date.now() });
+    }
     const pairs = await upstream(`https://api.dexscreener.com/token-pairs/v1/solana/${mint}`);
     const pair = Array.isArray(pairs) ? pairs.filter(p => p.chainId === 'solana' && p.baseToken?.address === mint).sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0] : null;
     if (!pair) return res.json({ trades: [], unavailable: 'No indexed pool.', updatedAt: Date.now() });
@@ -606,6 +609,23 @@ export function createApi({
     res.json({ trades: (data.data || []).slice(0, 20).map(row => row.attributes), source: 'GeckoTerminal', updatedAt: Date.now() });
   }));
   let indexed = { coins: [], expires: 0 };
+  app.get('/api/launches/indexed', route(async (req, res) => {
+    const offset = Number(req.query.offset || 0), limit = Number(req.query.limit || 24);
+    const status = req.query.status === undefined ? undefined : Number(req.query.status);
+    const query = text(req.query.query || '', 100);
+    if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100 || (status !== undefined && ![0, 1, 2].includes(status))) throw fail('Invalid indexed discovery page.');
+    if (!chainIndex) return res.json({ coins: [], available: false, reason: 'PostgreSQL chain index is not enabled.' });
+    const rows = await chainIndex.list({ query, status, offset, limit });
+    const registered = new Map((await records()).map(coin => [coin.mint, coin]));
+    const state = (await persisted.get('launchlab-indexer'))[0];
+    res.json({ coins: rows.map(row => ({ ...registered.get(row.mint), id: row.mint, mint: row.mint, poolId: row.pool, creator: row.creator, name: registered.get(row.mint)?.name || row.name || `${row.mint.slice(0, 4)}...${row.mint.slice(-4)}`, ticker: registered.get(row.mint)?.ticker || row.ticker || 'TOKEN', decimals: row.decimals, pair: 'SOL', uri: row.uri, source: registered.has(row.mint) ? 'YeetNest' : 'External LaunchLab', launchStatus: ['Trading', 'Migrating', 'Graduated'][row.status], progress: Number(row.target) > 0 ? Math.min(100, Number(row.raised) / Number(row.target) * 100) : 0, raised: row.raised, target: row.target, supplyRaw: row.supply, created: row.created === null ? null : Number(row.created), updatedAt: Number(row.updated), slot: Number(row.slot) })), available: true, hasMore: rows.length === limit, offset, indexedAt: state?.updatedAt || null, indexerError: state?.error || null, historyComplete: Boolean(state?.backfillComplete) });
+  }));
+  app.get('/api/curve/:mint', route(async (req, res) => {
+    const mint = address(req.params.mint);
+    if (!chainIndex) return res.json({ candles: [], available: false });
+    const [launch, candles] = await Promise.all([chainIndex.getLaunch(mint), chainIndex.candles(mint)]);
+    res.json({ candles: candles.map(row => [Number(row.time), Number(row.open), Number(row.high), Number(row.low), Number(row.close), Number(row.volume)]), available: Boolean(launch), currency: 'SOL', interval: '5m', source: 'Finalized LaunchLab reserve-delta trades', scope: 'indexed-trades-only; gaps-are-not-filled', updatedAt: launch ? Number(launch.updated) : null });
+  }));
   app.get(
     "/api/launches",
     route(async (req, res) => {
@@ -627,6 +647,7 @@ export function createApi({
         const target = Number(pool.totalFundRaisingB.toString());
         return {
           ...coin,
+          source: 'YeetNest',
           progress:
             target > 0
               ? Math.min(100, (Number(pool.realB.toString()) / target) * 100)
@@ -679,7 +700,7 @@ export function createApi({
           "Quote transaction does not require your wallet signature.",
           502,
         );
-      orders.set(order.requestId, {
+      await security.put('quote', order.requestId, {
         message: Buffer.from(tx.message.serialize()).toString("base64"),
         wallet: taker,
         expires: Date.now() + 60000,
@@ -690,7 +711,7 @@ export function createApi({
   app.post(
     "/api/swap/execute",
     route(async (req, res) => {
-      const order = orders.get(req.body.requestId);
+      const order = await security.get('quote', req.body.requestId);
       if (!order || order.expires < Date.now())
         throw fail("Quote expired. Request a new quote.", 410);
       const tx = VersionedTransaction.deserialize(
@@ -714,7 +735,7 @@ export function createApi({
           "Signed transaction does not match the reviewed quote.",
           403,
         );
-      orders.delete(req.body.requestId);
+      if (!await security.take('quote', req.body.requestId)) throw fail('Quote already executed or expired.', 410);
       res.json(
         await jupiter("/swap/v2/execute", {
           method: "POST",

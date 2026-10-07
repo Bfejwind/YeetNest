@@ -1,3 +1,5 @@
+import { withTimeout } from './async-timeout.js';
+
 export class TransactionOutcomeError extends Error {
   constructor(signature, state, message) {
     super(`${message} Signature: ${signature}. Recheck its status before creating another transaction.`);
@@ -7,9 +9,11 @@ export class TransactionOutcomeError extends Error {
 }
 
 export async function pollTransaction(connection, signature, { attempts = 45, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), onState = () => {} } = {}) {
+  const deadline = Date.now() + 100000;
   for (let attempt = 0; attempt < attempts; attempt++) {
+    if (Date.now() >= deadline) break;
     let status;
-    try { status = (await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0]; }
+    try { status = (await withTimeout(() => connection.getSignatureStatuses([signature], { searchTransactionHistory: true }), 10000, 'RPC status check timed out.')).value[0]; }
     catch { /* A temporary RPC outage cannot prove failure. */ }
     if (status?.err) {
       onState('failed');

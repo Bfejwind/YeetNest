@@ -8,11 +8,11 @@ This section supersedes the older pilot instructions below. See [AUDIT_REPORT.md
 2. Open Render Web Service > Settings. Runtime: Node. Root Directory: blank if `package.json` is at repository root. Build Command: `npm ci && npm run build`. Start Command: `npm start`. Do not use `build:hosted`.
 3. Health Check Path: `/readyz`. Paid service Pre-Deploy Command: `npm run db:migrate`. If free hosting does not offer this field, use Start Command `npm run db:migrate && npm start` for the pilot. Do not rely on database access during the build phase.
 4. Environment: `NODE_ENV=production`, `TRUST_PROXY_HOPS=1`, `DATABASE_URL`, `SOLANA_RPC_URL`, `JUPITER_API_KEY`, `PINATA_JWT`, optional `IPFS_GATEWAY`. Use PostgreSQL's internal URL when Render services share its private network/region. No secrets belong in `VITE_` variables. Let Render supply `PORT`.
-5. Use one instance: challenges, sessions, quotes and quotas are still in-memory. Proxy trust assumes one trusted reverse proxy; use `TRUST_PROXY_HOPS=0` for direct local access.
+5. Keep one pilot instance until transaction policy and shared IP abuse protection are complete. Nonces, hashed sessions, quote consumption and wallet upload/community limits now use PostgreSQL. Proxy trust assumes one trusted reverse proxy; use `TRUST_PROXY_HOPS=0` for direct local access. Apply migrations 003/004 before deploying this revision; see [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md) for the separate indexer worker and current blocker.
 6. PostgreSQL now holds catalogue, upload references, watchlists and community records. With Pinata, `DATA_DIR=./data` only needs to be writable. JSON fallback or self-hosted media needs a paid persistent disk at `/var/data`, `DATA_DIR=/var/data`, and backups. `PUBLIC_BASE_URL` alone does not make files durable.
 7. Save settings > Manual Deploy > Deploy latest commit. Check migration/start logs, then `/healthz`, `/readyz`, `/api/status`, and Integrations > Test connections. Readiness checks application/community storage and the runtime directory, not upstream trading.
 
-Render supplies HTTPS. API/RPC requests use the browser's current origin. No separate frontend API URL, permissive CORS, cookie configuration or WebSocket URL is required: authentication uses a short-lived in-memory bearer token. Server restarts require another sign-in.
+Render supplies HTTPS. API/RPC requests use the browser's current origin. No separate frontend API URL, permissive CORS, cookie configuration or WebSocket URL is required. PostgreSQL-backed bearer sessions survive restarts until their one-hour expiry; only the browser's bearer token remains in memory, so a browser reload can require signing in again.
 
 Migrations `001-community.sql` and `002-app-records.sql` were run successfully against the configured local destination on October 7. If Render points elsewhere, migrate that database too. Pool caps are 10 community plus 5 application connections per instance. Future non-idempotent upgrades need migration-version tracking.
 
@@ -40,7 +40,7 @@ For Docker hosting, configure environment variables locally and run `docker comp
 
 - Verify mainnet RPC, provider limits, public image/metadata URLs and TLS.
 - Use an operator-controlled wallet to accept/reject a launch, buy, sell, Jupiter swap and creator-fee claim. Confirm balances and signatures in Solscan. No funds have been moved by the coding agent.
-- Test a server restart: catalogue, image files and upload references must persist; creator sessions intentionally require signing in again.
+- Test a server restart: catalogue, persistent image files, upload references and unexpired PostgreSQL sessions must persist.
 - Provision database/indexing jobs, image moderation, distributed abuse controls, backups, alerting and dependency/security review before public production use.
 - Verify graduation with a real pool; indexed candles are not promised for pre-graduation assets.
 
