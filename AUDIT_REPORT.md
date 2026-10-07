@@ -2,6 +2,8 @@
 
 Date: October 7, 2026. Applies to the workspace revision, not automatically to the deployed Render revision. This is an engineering assessment, not an independent security audit. Branding/logo and the existing dark/mint design were preserved.
 
+For step-by-step operator instructions and engineering acceptance criteria for every remaining item, see [AUDIT_ACTION_GUIDE.md](AUDIT_ACTION_GUIDE.md).
+
 ## Architecture And Chain Authority
 
 YeetNest is a Vite/vanilla JavaScript frontend served by an Express Node backend. Its existing launch engine is an interface to **Raydium LaunchLab**, not Pump/PumpSwap and not a new YeetNest-owned on-chain program. Launches use Raydium's platform economics; YeetNest does not acquire its own fee authority simply by registering coins. Actual launch creation, curve trading and migration belong to the underlying program, not PostgreSQL entries.
