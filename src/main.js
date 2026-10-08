@@ -1,4 +1,5 @@
 import { createIcons, icons } from "./ui-icons.js";
+import brandLogo from '../logo.png';
 import { createAvatar } from "@dicebear/core";
 import * as bottts from "@dicebear/bottts-neutral";
 import * as chain from "./chain.js";
@@ -51,7 +52,7 @@ let demoCoins = read(
       volume: t[5],
       progress: t[6],
       art: t[7],
-      description: "A meme with a mission. Welcome to the nest.",
+      description: "A meme with a mission. Welcome to MemePop.",
     })),
   ),
 );
@@ -160,7 +161,7 @@ function filtered() {
             .toLowerCase()
             .includes(query.toLowerCase())) &&
         (category === "All coins" ||
-          (mode === 'live' && category === 'YeetNest' && t.source === 'YeetNest') ||
+          (mode === 'live' && category === 'MemePop' && t.source === 'MemePop') ||
           (mode === 'live' && category === 'LaunchLab' && Boolean(t.poolId)) ||
           (mode === 'live' && category === 'Market' && !t.poolId) ||
           (mode === 'demo' && (category === "Stocks"
@@ -191,7 +192,7 @@ function render() {
     volume = coins.reduce((sum, c) => sum + (c.volume || 0), 0),
     address = chain.publicKey?.toBase58();
   document.querySelector("#app").innerHTML =
-    `<aside class="sidebar"><a class="brand" href="#" aria-label="YeetNest home"><span class="brand-mark">${I("bird")}</span><span>YeetNest<span class="brand-dot">/</span></span></a><div class="network"><span class="live-dot"></span> SOLANA <b>MAINNET</b></div><nav>${[
+    `<aside class="sidebar"><a class="brand" href="#" aria-label="MemePop home"><img class="brand-logo" src="${brandLogo}" alt="MemePop" width="180" height="120"/></a><div class="network"><span class="live-dot"></span> SOLANA <b>MAINNET</b></div><nav>${[
       ["Explore", "compass"],
       ["Watchlist", "bookmark"],
       ["Portfolio", "chart-pie"],
@@ -203,11 +204,11 @@ function render() {
       )
       .join(
         "",
-      )}<button class="nav-item" data-launch title="Launch a coin">${I("circle-plus")}<span>Launch a coin</span>${I("arrow-up-right")}</button></nav><div class="sidebar-note"><span class="little-egg">${I("egg")}</span><h3>Small beginnings.<br>Big yeet energy.</h3><p>Your next idea belongs here.</p><button data-launch>Build your nest ${I("arrow-up-right")}</button></div><div class="sidebar-bottom"><span>Independent. Non-custodial.</span><button id="help">About YeetNest ${I("arrow-up-right")}</button><span>© 2026 YeetNest</span></div></aside><main><header><div class="breadcrumb">The nest <span>/</span> <b>${page}</b></div><div class="header-right"><div class="mode-switch" aria-label="Trading environment"><button data-mode="demo" class="${mode === "demo" ? "active" : ""}">Demo</button><button data-mode="live" class="${mode === "live" ? "active" : ""}"><span class="live-dot"></span> Live</button></div><button class="wallet" id="wallet">${I("wallet")} ${connected() ? (mode === "demo" ? `${demoBalance.toFixed(2)} SOL · Demo` : esc(short(address))) : "Connect wallet"}</button></div></header><div class="content">${
+      )}<button class="nav-item" data-launch title="Launch a coin">${I("circle-plus")}<span>Launch a coin</span>${I("arrow-up-right")}</button></nav><div class="sidebar-note"><span class="little-egg">${I("egg")}</span><h3>Small beginnings.<br>Big yeet energy.</h3><p>Your next idea belongs here.</p><button data-launch>Build your nest ${I("arrow-up-right")}</button></div><div class="sidebar-bottom"><span>Independent. Non-custodial.</span><button id="help">About MemePop ${I("arrow-up-right")}</button><span>© 2026 MemePop</span></div></aside><main><header><div class="breadcrumb">The market <span>/</span> <b>${page}</b></div><div class="header-right"><div class="mode-switch" aria-label="Trading environment"><button data-mode="demo" class="${mode === "demo" ? "active" : ""}">Demo</button><button data-mode="live" class="${mode === "live" ? "active" : ""}"><span class="live-dot"></span> Live</button></div><button class="wallet" id="wallet">${I("wallet")} ${connected() ? (mode === "demo" ? `${demoBalance.toFixed(2)} SOL · Demo` : esc(short(address))) : "Connect wallet"}</button></div></header><div class="content">${
       page === "Integrations"
         ? integrations()
         : `
-  <div class="heading"><div><div class="eyebrow"><span class="live-dot"></span> ${mode === "demo" ? "DEMO NEST / SAMPLE MARKET" : "LIVE NEST / SOLANA MAINNET"}</div><h1>${page === "Explore" ? "Where memes take flight." : page === "Watchlist" ? "On your radar." : "Your nest egg."}</h1><p>${page === "Explore" ? "Find your flock. Hatch a coin. Make your move." : page === "Watchlist" ? "The coins you are keeping close." : mode === "live" ? "On-chain balances from your connected wallet." : "Your demo positions, all in one place."}</p></div><button class="primary" data-launch>${I("plus")} Launch a coin ${I("arrow-up-right")}</button></div>
+  <div class="heading"><div><div class="eyebrow"><span class="live-dot"></span> ${mode === "demo" ? "DEMO MARKET / SAMPLE MARKET" : "LIVE MARKET / SOLANA MAINNET"}</div><h1>${page === "Explore" ? "Find your next big pop." : page === "Watchlist" ? "On your radar." : "Your portfolio."}</h1><p>${page === "Explore" ? "Discover memes. Launch a coin. Make your move." : page === "Watchlist" ? "The coins you are keeping close." : mode === "live" ? "On-chain balances from your connected wallet." : "Your demo positions, all in one place."}</p></div><button class="primary" data-launch>${I("plus")} Launch a coin ${I("arrow-up-right")}</button></div>
   <section class="stats">${[
     [
       "Listed 24h volume",
@@ -216,9 +217,9 @@ function render() {
       "chart-no-axes-combined",
     ],
     [
-      "Coins in the nest",
+      "Listed coins",
       String(coins.length),
-      mode === "demo" ? "Demo catalogue" : "Jupiter + YeetNest launches",
+      mode === "demo" ? "Demo catalogue" : "Jupiter + MemePop launches",
       "egg",
     ],
     [
@@ -243,8 +244,8 @@ function render() {
         `<div class="stat"><div>${a}${I(d)}</div><strong>${b}</strong><span>${c}</span></div>`,
     )
     .join("")}</section>
-  ${page === "Explore" ? `<section class="feature"><div class="feature-copy"><span class="label">${mode === "demo" ? "FROM THE NEST" : "MARKET SPOTLIGHT"}</span><h2>${spotlight ? esc(spotlight.name) : "Ready for takeoff."}</h2><p>${mode === "demo" ? "One small meme. A whole new flock." : spotlight ? `${esc(spotlight.source)} · ${spotlight.verified ? "Verified token" : "Check the mint address"}` : "Explore on-chain coins or hatch your own."}</p><button id="spotlight">${spotlight ? `Explore $${esc(spotlight.ticker)}` : "Explore live coins"} ${I("arrow-up-right")}</button></div><div class="feature-art">${spotlight ? art(spotlight) : `<div class="empty-art">${I("egg")}</div>`}<span class="floating-tag tag-one">${I("feather")} JUST HATCHED</span><span class="floating-tag tag-two">${spotlight?.change != null ? `${spotlight.change > 0 ? "+" : ""}${spotlight.change.toFixed(2)}%` : "YEETNEST"} ${I("arrow-up-right")}</span></div><div class="feature-market"><span class="label">${spotlight?.cap != null ? "MARKET CAP" : "YOUR NEXT LAUNCH"}</span><strong>${spotlight?.cap != null ? money(spotlight.cap) : "Starts here."}</strong><p>${mode === "demo" ? "Sample market" : "Provider market data"}</p><div class="nest-lines">${I("bird")}${I("move-up-right")}</div><span class="paired">${spotlight?.mint ? `<a href="https://solscan.io/token/${esc(spotlight.mint)}" target="_blank" rel="noopener noreferrer">${esc(short(spotlight.mint))} ${I("external-link")}</a>` : "Hatch something worth watching."}</span></div></section>` : ""}
-<section class="market"><div class="market-heading"><h2>${page === "Explore" ? "Fresh from the nest" : page}</h2><span class="live-label"><span class="live-dot"></span> ${mode === "demo" ? "Sample market" : lastUpdated ? `Updated ${new Date(lastUpdated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Provider data"}</span><button id="refresh" class="icon-button" title="Refresh market">${I("refresh-cw")}</button></div><div class="tabs">${["Trending", "New pairs", "About to graduate", "Graduated"].map((n) => `<button class="${tab === n ? "selected" : ""}" data-tab="${n}">${I(n === "Trending" ? "flame" : n === "New pairs" ? "sparkles" : n === "About to graduate" ? "graduation-cap" : "badge-check")}${n}</button>`).join("")}<div class="view-switch"><button data-view="grid" title="Grid view" class="${view === "grid" ? "selected" : ""}">${I("layout-grid")}</button><button data-view="list" title="List view" class="${view === "list" ? "selected" : ""}">${I("list")}</button></div></div><div class="filters"><div class="categories">${(mode === "live" ? ["All coins", "YeetNest", "LaunchLab", "Market"] : ["All coins", "Stocks", "Crypto", "Pre-IPO"]).map((n) => `<button data-category="${n}" class="${category === n ? "chosen" : ""}">${n}</button>`).join("")}</div><div class="search-sort"><label class="search">${I("search")}<input id="search" aria-label="Search coins" placeholder="Search coins or mint address" value="${esc(query)}"/></label><label class="sort">${I("arrow-down-wide-narrow")}<select id="sort" aria-label="Sort coins"><option>Trending</option><option>Market cap</option><option>Volume</option><option>Top gainers</option></select></label></div></div>${liveError && mode === "live" ? `<div class="notice error">${I("circle-alert")}<span>${esc(liveError)}</span><button id="retry">Retry</button></div>` : ""}${mode === "live" && page === "Portfolio" && !chain.publicKey ? `<div class="notice">${I("wallet")} Connect a wallet to load your real holdings.</div>` : ""}<div id="coins" class="coins ${view}"></div></section>`
+  ${page === "Explore" ? `<section class="feature"><div class="feature-copy"><span class="label">${mode === "demo" ? "FROM THE NEST" : "MARKET SPOTLIGHT"}</span><h2>${spotlight ? esc(spotlight.name) : "Ready for takeoff."}</h2><p>${mode === "demo" ? "One small meme. A whole new flock." : spotlight ? `${esc(spotlight.source)} · ${spotlight.verified ? "Verified token" : "Check the mint address"}` : "Explore on-chain coins or hatch your own."}</p><button id="spotlight">${spotlight ? `Explore $${esc(spotlight.ticker)}` : "Explore live coins"} ${I("arrow-up-right")}</button></div><div class="feature-art">${spotlight ? art(spotlight) : `<div class="empty-art">${I("egg")}</div>`}<span class="floating-tag tag-one">${I("feather")} JUST HATCHED</span><span class="floating-tag tag-two">${spotlight?.change != null ? `${spotlight.change > 0 ? "+" : ""}${spotlight.change.toFixed(2)}%` : "MEMEPOP"} ${I("arrow-up-right")}</span></div><div class="feature-market"><span class="label">${spotlight?.cap != null ? "MARKET CAP" : "YOUR NEXT LAUNCH"}</span><strong>${spotlight?.cap != null ? money(spotlight.cap) : "Starts here."}</strong><p>${mode === "demo" ? "Sample market" : "Provider market data"}</p><div class="nest-lines">${I("bird")}${I("move-up-right")}</div><span class="paired">${spotlight?.mint ? `<a href="https://solscan.io/token/${esc(spotlight.mint)}" target="_blank" rel="noopener noreferrer">${esc(short(spotlight.mint))} ${I("external-link")}</a>` : "Hatch something worth watching."}</span></div></section>` : ""}
+<section class="market"><div class="market-heading"><h2>${page === "Explore" ? "Fresh pops" : page}</h2><span class="live-label"><span class="live-dot"></span> ${mode === "demo" ? "Sample market" : lastUpdated ? `Updated ${new Date(lastUpdated).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Provider data"}</span><button id="refresh" class="icon-button" title="Refresh market">${I("refresh-cw")}</button></div><div class="tabs">${["Trending", "New pairs", "About to graduate", "Graduated"].map((n) => `<button class="${tab === n ? "selected" : ""}" data-tab="${n}">${I(n === "Trending" ? "flame" : n === "New pairs" ? "sparkles" : n === "About to graduate" ? "graduation-cap" : "badge-check")}${n}</button>`).join("")}<div class="view-switch"><button data-view="grid" title="Grid view" class="${view === "grid" ? "selected" : ""}">${I("layout-grid")}</button><button data-view="list" title="List view" class="${view === "list" ? "selected" : ""}">${I("list")}</button></div></div><div class="filters"><div class="categories">${(mode === "live" ? ["All coins", "MemePop", "LaunchLab", "Market"] : ["All coins", "Stocks", "Crypto", "Pre-IPO"]).map((n) => `<button data-category="${n}" class="${category === n ? "chosen" : ""}">${n}</button>`).join("")}</div><div class="search-sort"><label class="search">${I("search")}<input id="search" aria-label="Search coins" placeholder="Search coins or mint address" value="${esc(query)}"/></label><label class="sort">${I("arrow-down-wide-narrow")}<select id="sort" aria-label="Sort coins"><option>Trending</option><option>Market cap</option><option>Volume</option><option>Top gainers</option></select></label></div></div>${liveError && mode === "live" ? `<div class="notice error">${I("circle-alert")}<span>${esc(liveError)}</span><button id="retry">Retry</button></div>` : ""}${mode === "live" && page === "Portfolio" && !chain.publicKey ? `<div class="notice">${I("wallet")} Connect a wallet to load your real holdings.</div>` : ""}<div id="coins" class="coins ${view}"></div></section>`
     }<footer><span>${I("feather")} A little chaos. A lot of possibility.</span><span>${mode === "demo" ? "Demo environment" : "Solana · Jupiter · Raydium"} ${I("arrow-up-right")}</span></footer></div></main><div id="modal-root"></div><div id="toast" role="status"></div>`;
   if (page !== "Integrations") {
     document.querySelector("#sort").value = sort;
@@ -327,7 +328,7 @@ const parity = [
   [
     "Fee / launch customization",
     "Unfinished",
-    "YeetNest platform config, selectable fees, initial buy / bundles",
+    "MemePop platform config, selectable fees, initial buy / bundles",
   ],
   [
     "Buyback / burn flywheel",
@@ -346,7 +347,7 @@ const parity = [
   ],
 ];
 function integrations() {
-  return `<div class="heading"><div><div class="eyebrow">CONNECTED INFRASTRUCTURE</div><h1>The foundations of the nest.</h1><p>Provider status and feature availability.</p></div><button class="primary" id="check-status">${I("refresh-cw")} Check status</button></div><div class="provider-grid">${[
+  return `<div class="heading"><div><div class="eyebrow">CONNECTED INFRASTRUCTURE</div><h1>Connected infrastructure.</h1><p>Provider status and feature availability.</p></div><button class="primary" id="check-status">${I("refresh-cw")} Check status</button></div><div class="provider-grid">${[
     [
       "Jupiter",
       "Swaps + token discovery",
@@ -384,7 +385,7 @@ function integrations() {
     )
     .join(
       "",
-    )}</div><section class="parity"><h2>StonkFun feature parity</h2><p>Reference access is incomplete. These gaps are based on published launch documentation, not a full audit of StonkFun.</p><div class="table-wrap"><table><thead><tr><th>Feature</th><th>YeetNest status</th><th>Remaining work</th></tr></thead><tbody>${parity.map(([a, b, c]) => `<tr><td>${a}</td><td><span class="status-pill ${b === "Unfinished" ? "pending" : ""}">${b}</span></td><td>${c}</td></tr>`).join("")}</tbody></table></div><a class="source-link" href="https://docs.sumo.trade/launch-tokens/stonkfun-launch" target="_blank" rel="noopener noreferrer">Published StonkFun launch documentation ${I("external-link")}</a></section>`;
+    )}</div><section class="parity"><h2>StonkFun feature parity</h2><p>Reference access is incomplete. These gaps are based on published launch documentation, not a full audit of StonkFun.</p><div class="table-wrap"><table><thead><tr><th>Feature</th><th>MemePop status</th><th>Remaining work</th></tr></thead><tbody>${parity.map(([a, b, c]) => `<tr><td>${a}</td><td><span class="status-pill ${b === "Unfinished" ? "pending" : ""}">${b}</span></td><td>${c}</td></tr>`).join("")}</tbody></table></div><a class="source-link" href="https://docs.sumo.trade/launch-tokens/stonkfun-launch" target="_blank" rel="noopener noreferrer">Published StonkFun launch documentation ${I("external-link")}</a></section>`;
 }
 let discoveryPage = 0;
 function drawCoins() {
@@ -402,7 +403,7 @@ function drawCoins() {
         return `<article class="coin" data-coin="${esc(t.id)}" tabindex="0" aria-label="Open ${esc(t.name)}"><div class="coin-top">${art(t)}<div class="coin-title"><h3 title="${esc(t.name)}">${esc(t.name)}</h3><span>$${esc(t.ticker)} <span class="age">${mode === "demo" ? "Demo" : t.verified ? "Verified" : "Live"}</span></span></div><button class="save ${watchlist.includes(String(t.id)) ? "saved" : ""}" data-save="${esc(t.id)}" title="${watchlist.includes(String(t.id)) ? "Remove from" : "Add to"} watchlist">${I("bookmark")}</button></div><div class="pair-row"><span class="pair">${t.poolId ? "LAUNCHLAB" : esc(t.pair)}</span><span class="change ${t.change < 0 ? "negative" : ""}">${t.change == null ? "--" : `${t.change > 0 ? "+" : ""}${t.change.toFixed(2)}%`}${I(t.change < 0 ? "trending-down" : "trending-up")}</span></div><div class="coin-numbers"><div><span>Market cap</span><b>${money(t.cap)}</b></div><div><span>24h volume</span><b>${money(t.volume)}</b></div></div>${page === "Portfolio" && holding ? `<div class="holding">${mode === "demo" ? `${holding.amount.toFixed(4)} SOL allocated` : `${esc(fromUnits(holding.amount, holding.decimals))} ${esc(t.ticker)}`}</div>` : `<div class="curve-label"><span>${t.progress == null ? esc(t.source || "Sample") : "Bonding curve"}</span><b>${t.progress == null ? I("arrow-up-right") : `${t.progress.toFixed(0)}%`}</b></div>${t.progress != null ? `<div class="progress"><span style="width:${Math.min(t.progress, 100)}%"></span></div>` : ""}`}</article>`;
       })
       .join("") ||
-    `<div class="empty">${I(loading ? "loader-circle" : "egg")}<h3>${loading ? "Loading the nest..." : page === "Portfolio" ? "Your nest is waiting." : "Nothing in this nest yet."}</h3><p>${loading ? "Fetching provider data." : mode === "live" && tab !== "Trending" && tab !== "New pairs" ? "Graduation filters cover registered YeetNest LaunchLab coins only." : "Try another search, or hatch something new."}</p></div>`;
+    `<div class="empty">${I(loading ? "loader-circle" : "egg")}<h3>${loading ? "Loading MemePop..." : page === "Portfolio" ? "Your portfolio is waiting." : "No coins here yet."}</h3><p>${loading ? "Fetching provider data." : mode === "live" && tab !== "Trending" && tab !== "New pairs" ? "Graduation filters cover registered MemePop LaunchLab coins only." : "Try another search, or launch something new."}</p></div>`;
   document.querySelectorAll("[data-coin]").forEach((el) => {
     el.onclick = () => detail(el.dataset.coin);
     el.onkeydown = (e) => {
@@ -519,7 +520,7 @@ function bind() {
   document.querySelector("#wallet").onclick = walletModal;
   document.querySelector("#help").onclick = () =>
     modal(
-      `<span class="eyebrow">HELLO, YEETNEST</span><h2>A home for your next meme.</h2><p>Demo coins and balances stay in this browser. Live transactions use Solana mainnet and require your wallet signature. Creator image updates change the YeetNest listing; the original on-chain metadata remains unchanged.</p><button class="primary full" id="see-integrations">View integrations</button>`,
+      `<span class="eyebrow">HELLO, MEMEPOP</span><h2>A home for your next meme.</h2><p>Demo coins and balances stay in this browser. Live transactions use Solana mainnet and require your wallet signature. Creator image updates change the MemePop listing; the original on-chain metadata remains unchanged.</p><button class="primary full" id="see-integrations">View integrations</button>`,
       () => {
         document.querySelector("#see-integrations").onclick = () => {
           page = "Integrations";
@@ -685,7 +686,7 @@ function inlineError(error) {
 function walletModal() {
   if (connected()) {
     modal(
-      `<span class="eyebrow">${mode === "demo" ? "DEMO WALLET" : "LIVE WALLET"}</span><h2>Your nest egg.</h2><p class="address">${mode === "demo" ? "Local demo wallet" : esc(chain.publicKey.toBase58())}</p><div class="wallet-balance">${mode === "demo" ? demoBalance.toFixed(4) : solBalance == null ? "--" : solBalance.toFixed(4)} <span>SOL</span></div><button class="secondary full" id="disconnect">Disconnect</button>`,
+      `<span class="eyebrow">${mode === "demo" ? "DEMO WALLET" : "LIVE WALLET"}</span><h2>Your portfolio.</h2><p class="address">${mode === "demo" ? "Local demo wallet" : esc(chain.publicKey.toBase58())}</p><div class="wallet-balance">${mode === "demo" ? demoBalance.toFixed(4) : solBalance == null ? "--" : solBalance.toFixed(4)} <span>SOL</span></div><button class="secondary full" id="disconnect">Disconnect</button>`,
       () => {
         document.querySelector("#disconnect").onclick = async () => {
           if (mode === "demo") demoWallet = false;
@@ -723,7 +724,7 @@ function walletModal() {
             const QRCode = await import('qrcode');
             const image = await QRCode.default.toDataURL(link, { width: 224, margin: 2, errorCorrectionLevel: 'M' });
             if (!root.isConnected) return;
-            root.innerHTML = `<h3>${esc(button.dataset.phoneWallet)} on phone</h3><span class="status-pill">Phone session</span><img class="wallet-qr" src="${image}" alt="Open YeetNest in ${esc(button.dataset.phoneWallet)} on your phone"/><a class="source-link" href="${esc(link)}" rel="noopener noreferrer">Open ${esc(button.dataset.phoneWallet)} ${I('arrow-up-right')}</a>`;
+            root.innerHTML = `<h3>${esc(button.dataset.phoneWallet)} on phone</h3><span class="status-pill">Phone session</span><img class="wallet-qr" src="${image}" alt="Open MemePop in ${esc(button.dataset.phoneWallet)} on your phone"/><a class="source-link" href="${esc(link)}" rel="noopener noreferrer">Open ${esc(button.dataset.phoneWallet)} ${I('arrow-up-right')}</a>`;
             createIcons({ icons });
           } catch(e) { if (root.isConnected) error.textContent = e.message; }
           finally { button.disabled = false; }
@@ -942,7 +943,7 @@ function launch() {
 }
 function reviewLaunch(prepared, metadata, d) {
   modal(
-    `<span class="eyebrow">LIVE LAUNCH / REVIEW</span><h2>Ready to leave the nest?</h2><div class="detail-heading"><img src="${esc(metadata.image)}" alt="${esc(d.name)}"/><div><h3>${esc(d.name)}</h3><span>$${esc(d.ticker.toUpperCase())}</span></div></div><div class="launch-terms"><span>Network <b>Solana mainnet</b></span><span>Supply <b>${prepared.supply}</b></span><span>Transactions <b>${prepared.transactions}</b></span><span>Initial buy <b>None</b></span></div><p class="address">Mint: ${esc(prepared.mint)}</p><p class="fine">Review transactions and network fees in your wallet. Raydium's default platform economics apply. Wallet confirmation submits a real token launch.</p><p class="form-error" id="form-error"></p><button class="primary full" id="sign-launch">${I("pen-line")} Sign and launch</button>`,
+    `<span class="eyebrow">LIVE LAUNCH / REVIEW</span><h2>Ready to make it pop?</h2><div class="detail-heading"><img src="${esc(metadata.image)}" alt="${esc(d.name)}"/><div><h3>${esc(d.name)}</h3><span>$${esc(d.ticker.toUpperCase())}</span></div></div><div class="launch-terms"><span>Network <b>Solana mainnet</b></span><span>Supply <b>${prepared.supply}</b></span><span>Transactions <b>${prepared.transactions}</b></span><span>Initial buy <b>None</b></span></div><p class="address">Mint: ${esc(prepared.mint)}</p><p class="fine">Review transactions and network fees in your wallet. Raydium's default platform economics apply. Wallet confirmation submits a real token launch.</p><p class="form-error" id="form-error"></p><button class="primary full" id="sign-launch">${I("pen-line")} Sign and launch</button>`,
     () => {
       document.querySelector("#sign-launch").onclick = async (e) => {
         const b = e.currentTarget;
@@ -1017,7 +1018,7 @@ function detail(id) {
       : coin.creator && coin.creator === chain.publicKey?.toBase58();
   let side = "Buy";
   modal(
-    `<div class="detail-heading">${art(coin)}<div><span class="eyebrow">${mode === "demo" ? "DEMO COIN" : esc(coin.source || "SOLANA")} / ${esc(coin.pair)}</span><h2>${esc(coin.name)}</h2><span class="muted">$${esc(coin.ticker)}</span></div>${owns ? `<button class="icon-button" id="edit-art" title="Change coin artwork">${I("image-plus")}</button>` : ""}</div><p class="coin-description">${esc(coin.description || "Welcome to the nest.")}</p>${coin.mint ? `<a class="mint-address" href="https://solscan.io/token/${esc(coin.mint)}" target="_blank" rel="noopener noreferrer">${esc(coin.mint)} ${I("external-link")}</a>` : ""}<div class="detail-stats"><span>Market cap<b>${money(coin.cap)}</b></span><span>24h change<b class="change ${coin.change < 0 ? "negative" : ""}">${coin.change == null ? "--" : `${coin.change.toFixed(2)}%`}</b></span><span>Volume<b>${money(coin.volume)}</b></span></div>${coin.progress != null ? `<div class="curve-summary"><span>Bonding curve</span><b>${coin.progress.toFixed(0)}%</b><div class="progress"><span style="width:${coin.progress}%"></span></div></div>` : ""}<form id="trade-form"><div class="trade-tabs"><button type="button" class="selected" data-side="Buy">Buy</button><button type="button" data-side="Sell">Sell</button></div><label id="amount-label"><span>Amount (SOL)</span><input name="amount" inputmode="decimal" placeholder="0.00" required pattern="[0-9]+([.][0-9]+)?"/></label><div class="quick-amounts">${[0.1, 0.5, 1, 2].map((n) => `<button type="button" data-amount="${n}">${n}</button>`).join("")}</div><p class="fine">${mode === "demo" ? "Simulated trade. No funds are transferred." : coin.poolId ? "Raydium bonding curve until graduation; Jupiter routing afterwards." : "Live Jupiter routing. Review the quote before signing."}</p><p class="form-error" id="form-error" role="alert"></p><button class="primary full" type="submit" id="trade-submit">${connected() ? (mode === "demo" ? `Demo buy $${esc(coin.ticker)}` : "Get live quote") : "Connect wallet"}</button></form>`,
+    `<div class="detail-heading">${art(coin)}<div><span class="eyebrow">${mode === "demo" ? "DEMO COIN" : esc(coin.source || "SOLANA")} / ${esc(coin.pair)}</span><h2>${esc(coin.name)}</h2><span class="muted">$${esc(coin.ticker)}</span></div>${owns ? `<button class="icon-button" id="edit-art" title="Change coin artwork">${I("image-plus")}</button>` : ""}</div><p class="coin-description">${esc(coin.description || "Welcome to MemePop.")}</p>${coin.mint ? `<a class="mint-address" href="https://solscan.io/token/${esc(coin.mint)}" target="_blank" rel="noopener noreferrer">${esc(coin.mint)} ${I("external-link")}</a>` : ""}<div class="detail-stats"><span>Market cap<b>${money(coin.cap)}</b></span><span>24h change<b class="change ${coin.change < 0 ? "negative" : ""}">${coin.change == null ? "--" : `${coin.change.toFixed(2)}%`}</b></span><span>Volume<b>${money(coin.volume)}</b></span></div>${coin.progress != null ? `<div class="curve-summary"><span>Bonding curve</span><b>${coin.progress.toFixed(0)}%</b><div class="progress"><span style="width:${coin.progress}%"></span></div></div>` : ""}<form id="trade-form"><div class="trade-tabs"><button type="button" class="selected" data-side="Buy">Buy</button><button type="button" data-side="Sell">Sell</button></div><label id="amount-label"><span>Amount (SOL)</span><input name="amount" inputmode="decimal" placeholder="0.00" required pattern="[0-9]+([.][0-9]+)?"/></label><div class="quick-amounts">${[0.1, 0.5, 1, 2].map((n) => `<button type="button" data-amount="${n}">${n}</button>`).join("")}</div><p class="fine">${mode === "demo" ? "Simulated trade. No funds are transferred." : coin.poolId ? "Raydium bonding curve until graduation; Jupiter routing afterwards." : "Live Jupiter routing. Review the quote before signing."}</p><p class="form-error" id="form-error" role="alert"></p><button class="primary full" type="submit" id="trade-submit">${connected() ? (mode === "demo" ? `Demo buy $${esc(coin.ticker)}` : "Get live quote") : "Connect wallet"}</button></form>`,
     () => {
       if (owns)
         document.querySelector("#edit-art").onclick = () => editArtwork(coin);
@@ -1156,7 +1157,7 @@ function transactionResult(title, signature, mint) {
 function editArtwork(coin) {
   let uploaded = "";
   modal(
-    `<span class="eyebrow">CREATOR STUDIO</span><h2>Give your coin a new look.</h2><form id="image-form"><label class="upload-control"><span class="upload-preview" id="upload-preview">${art(coin)}</span><span>New coin artwork<small>PNG, JPEG, WebP, GIF · up to 5 MB</small></span><input type="file" id="coin-image" accept="image/png,image/jpeg,image/webp,image/gif" required/></label><p class="fine">${mode === "demo" ? "Updates this browser’s demo listing." : "Only your creator wallet can update this YeetNest listing. Original on-chain metadata stays unchanged."}</p><p class="form-error" id="form-error" role="alert"></p><button class="primary full" type="submit">${I("image")} Save artwork</button></form>`,
+    `<span class="eyebrow">CREATOR STUDIO</span><h2>Give your coin a new look.</h2><form id="image-form"><label class="upload-control"><span class="upload-preview" id="upload-preview">${art(coin)}</span><span>New coin artwork<small>PNG, JPEG, WebP, GIF · up to 5 MB</small></span><input type="file" id="coin-image" accept="image/png,image/jpeg,image/webp,image/gif" required/></label><p class="fine">${mode === "demo" ? "Updates this browser’s demo listing." : "Only your creator wallet can update this MemePop listing. Original on-chain metadata stays unchanged."}</p><p class="form-error" id="form-error" role="alert"></p><button class="primary full" type="submit">${I("image")} Save artwork</button></form>`,
     () => {
       document.querySelector("#coin-image").onchange = async (e) => {
         try {
@@ -1221,7 +1222,7 @@ document.addEventListener(
     img.dataset.fallback = "true";
     img.title = "Artwork unavailable from the provider";
     img.src = createAvatar(bottts, {
-      seed: img.alt || "YeetNest",
+      seed: img.alt || "MemePop",
       backgroundColor: ["f5bfac"],
     }).toDataUri();
   },

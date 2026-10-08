@@ -1,26 +1,26 @@
 :root {
   --ink: #f5f6f8;
-  --muted: #a4a9b3;
+  --muted: #b4b4bf;
   --line: #30343d;
-  --coral: #86efac;
-  --teal: #86efac;
+  --coral: #ffd52a;
+  --teal: #ffd52a;
   --surface: #1b1e25;
   --surface-raised: #242831;
   --chart-grid: #2c313a;
-  background: #13151a;
+  background: #111216;
   color: var(--ink);
 }
-.sidebar, header { background: #17191f; border-color: var(--line); }
-.brand-mark, .little-egg { background: #86efac; color: #112019; }
+.sidebar, header { background: #17181d; border-color: var(--line); }
+.brand-mark, .little-egg { background: #ffd52a; color: #171310; }
 .brand-dot, .source-link, .provider a, .sidebar-bottom button,
 .sidebar-note button, .tabs > button.selected, .save.saved,
-.coin-socials a, .feature-copy button { color: #86efac; }
-.nav-item.active, .nav-item.active:hover { background: #24362d; color: #a4f8bf; }
+.coin-socials a, .feature-copy button { color: #ffd52a; }
+.nav-item.active, .nav-item.active:hover { background: #34302a; color: #ffe88b; }
 .nav-item:hover { background: #262a32; }
 .nav-item small, .nav-item.active small, .network b { background: #2c3336; color: #d4dce1; }
-.network .live-dot, .mode-switch .live-dot { background: #86efac; }
-.primary, .creator-actions .primary { background: #86efac; color: #102017; }
-.primary:hover { background: #b0f7ca; }
+.network .live-dot, .mode-switch .live-dot { background: #ffd52a; }
+.primary, .creator-actions .primary { background: #ffd52a; color: #171310; }
+.primary:hover { background: #ffe56d; }
 .wallet, .secondary, .search, .sort, .sort select, .wallet-option,
 .quick-amounts button, .trade-tabs button, .creator-actions .secondary {
   background: #232730; border-color: #3a414b; color: var(--ink);
@@ -40,18 +40,18 @@
 }
 .coin:hover { background: #242933; border-color: #566070; }
 .coin .progress, .curve-summary .progress { background: #353b45; }
-.coin:nth-child(n) .progress span, .progress span { background: #86efac; }
+.coin:nth-child(n) .progress span, .progress span { background: #ffd52a; }
 .pair, .coin:nth-child(2n) .pair, .categories .chosen {
-  background: #273b30; color: #a0f0b9;
+  background: #332d22; color: #ffe077;
 }
-.change, .holding, .mint-address, .curve-label b, .live-label { color: #86efac; }
-.negative, .form-error { color: #fb939d; }
+.change, .holding, .mint-address, .curve-label b, .live-label { color: #ffd52a; }
+.negative, .form-error { color: #ff7c72; }
 .empty { background: #191d24; border-color: #3a424e; }
-.empty svg { color: #86efac; }
-.provider-icon, .provider:nth-child(n) .provider-icon { background: #29352e; color: #a4efbc; }
+.empty svg { color: #ffd52a; }
+.provider-icon, .provider:nth-child(n) .provider-icon { background: #302b26; color: #ffbb55; }
 .parity th { background: #252a33; color: #e0e5ed; }
 .parity td:last-child { color: var(--muted); }
-.status-pill { background: #293d31; color: #b2eccc; }
+.status-pill { background: #31352b; color: #c6deb3; }
 .status-pill.pending { background: #3a3225; color: #efcf97; }
 .modal { background: #1b1e25; border-color: #3d4550; }
 .modal input, .modal textarea, .modal select, .setup-fields input {
@@ -59,15 +59,15 @@
 }
 .modal input::placeholder, .modal textarea::placeholder,
 .setup-fields input::placeholder { color: #9ba3b0; }
-.trade-tabs .selected { background: #2b4133; border-color: #77ac87; color: #c2f7d2; }
-.upload-control, .upload-preview { background: #232c2a; border-color: #526c5d; }
-.upload-control small, .upload-preview svg { color: #bdcabc; }
-.creator-banner { background: #20332a; border-color: #3b5b47; }
-.creator-banner h2, .claim-amount { color: #b8f5cc; }
+.trade-tabs .selected { background: #343027; border-color: #e7b62c; color: #ffe18a; }
+.upload-control, .upload-preview { background: #26272b; border-color: #55525a; }
+.upload-control small, .upload-preview svg { color: #c7c4bc; }
+.creator-banner { background: #29282c; border-color: #514a42; }
+.creator-banner h2, .claim-amount { color: #ffdb57; }
 .notice, .health-check.unhealthy { background: #353026; border-color: #bba16e; color: #e4d0a9; }
 .notice.error { background: #3b252b; color: #ffbcc5; border-color: #cc7a88; }
-.success-mark, .health-check, .health-check.healthy { background: #25382c; color: #c6eacb; }
-#toast { background: #283d31; border-color: #5b8368; color: #e9f7ee; }
+.success-mark, .health-check, .health-check.healthy { background: #293229; color: #c6deb3; }
+#toast { background: #292b30; border-color: #827347; color: #fff5d3; }
 .count-badge { background: #2c323d; color: #cad6e7; }
 .coin h3 { font-size: 13px; }
 .terminal-search, #rank-by, .profile-form input, .profile-form textarea {
@@ -135,3 +135,27 @@
 #phone-wallet h3 { font-size: 18px; margin-bottom: 8px; }
 .wallet-qr { display: block; width: 224px; max-width: 100%; aspect-ratio: 1; margin: 12px auto; }
 .discovery-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; }
+
+/* Full wordmark stays uncropped at every navigation breakpoint. */
+.brand { width: 100%; justify-content: center; }
+.brand-logo { display: block; width: 180px; max-width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: contain; border-radius: 4px; }
+.stat:nth-child(1) svg { color: #ffd52a; }
+.stat:nth-child(2) svg { color: #ff9b38; }
+.stat:nth-child(3) svg { color: #ff7261; }
+.stat:nth-child(4) svg { color: #f5f6f8; }
+.coin:nth-child(3n + 2) .progress span { background: #ff9b38; }
+.coin:nth-child(3n) .progress span { background: #ff7261; }
+.tabs > button.selected:after { background: #ff9b38; }
+.coin-socials a, .provider a, .source-link { color: #ffbb55; }
+.live-label, .change, .holding, .mint-address, .curve-label b { color: #c6deb3; }
+.negative { color: #ff7c72; }
+.creator-banner .label, .creator-banner p, .health-check span { color: var(--muted); }
+.chart-header, .pool-metrics span { color: var(--muted); }
+.modal, .setup-section, .upload-control { border-color: var(--line); }
+@media (min-width: 601px) and (max-width: 950px) {
+  .brand-logo { width: 52px; }
+}
+@media (max-width: 600px) {
+  .brand { width: 126px; flex-shrink: 0; justify-content: flex-start; }
+  .brand-logo { width: 126px; }
+}

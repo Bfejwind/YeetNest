@@ -70,6 +70,23 @@ test('launch preparation timeout keeps completed metadata and ignores late RPC c
   await expect(page.locator('#sign-launch')).toHaveCount(0);
 });
 
+test('MemePop uses the supplied logo and its palette without responsive overflow', async ({ page }) => {
+  await page.goto('/');
+  await expect(page).toHaveTitle(/MemePop/);
+  await expect(page.getByRole('link', { name: 'MemePop home' })).toBeVisible();
+  const logo = page.locator('.brand-logo');
+  await expect(logo).toHaveAttribute('alt', 'MemePop');
+  await expect.poll(() => logo.evaluate(img => img.complete && img.naturalWidth > 0)).toBe(true);
+  expect(await page.locator('.primary').first().evaluate(button => getComputedStyle(button).backgroundColor)).toBe('rgb(255, 213, 42)');
+  for (const width of [1440, 768, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(logo).toBeVisible();
+    expect(await logo.evaluate(img => Math.abs(img.clientWidth / img.clientHeight - 1.5) < .05)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: `memepop-${width}.png`, fullPage: true });
+  }
+});
+
 test('live candles render and creator studio is usable on desktop and mobile', async ({ page }) => {
   const mint = Keypair.generate().publicKey.toBase58();
   await page.route('**/api/tokens*', r => r.fulfill({ json: [{ id: mint, name: 'Live Yeet', symbol: 'YEET', decimals: 9, usdPrice: 1 }] }));
@@ -108,7 +125,7 @@ test('indexed curve chart and source filters do not mistake migration for gradua
   await page.goto('/');
   await page.locator('[data-mode="live"]').click();
   await expect(page.locator('.coin')).toHaveCount(2);
-  await page.locator('[data-category="YeetNest"]').click();
+  await page.locator('[data-category="MemePop"]').click();
   await expect(page.locator('.coin')).toHaveCount(0);
   await page.locator('[data-category="LaunchLab"]').click();
   await expect(page.locator('.coin')).toHaveCount(2);
@@ -124,7 +141,7 @@ test('indexed curve chart and source filters do not mistake migration for gradua
 test('creator artwork persists, can be changed, and demo funds are accounted for', async ({ page }) => {
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto('/');
-  await expect(page).toHaveTitle(/YeetNest/);
+  await expect(page).toHaveTitle(/MemePop/);
   await expect(page.locator('.coin')).toHaveCount(8);
   await page.locator('#wallet').click(); await page.locator('#demo').click();
   await page.locator('[data-launch]').first().click();

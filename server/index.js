@@ -32,7 +32,7 @@ app.get('/readyz', async (req, res) => {
 app.use(api);
 app.use(express.static('dist'));
 const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`YeetNest is running at http://localhost:${port}`);
+  console.log(`MemePop is running at http://localhost:${port}`);
 });
 function shutdown() {
   if (stopping) return;

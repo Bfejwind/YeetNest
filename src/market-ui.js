@@ -36,7 +36,7 @@ export function installMarketUI(context) {
   }
   if (page === 'Integrations') {
     document.querySelector('.parity h2').textContent = 'Pump.fun feature coverage';
-    document.querySelector('.parity p').textContent = 'YeetNest uses Raydium, not Pump contracts. Funded launch, trading and claim acceptance remain unverified.';
+    document.querySelector('.parity p').textContent = 'MemePop uses Raydium, not Pump contracts. Funded launch, trading and claim acceptance remain unverified.';
     document.querySelector('.parity tbody').innerHTML = pumpFeatures.map(([name, status, remaining]) => `<tr><td>${esc(name)}</td><td><span class="status-pill ${status === 'Not implemented' || status === 'Demo only' ? 'pending' : ''}">${status}</span></td><td>${esc(remaining)}</td></tr>`).join('');
     const source = document.querySelector('.parity .source-link');
     source.href = 'https://github.com/pump-fun/pump-public-docs';
@@ -44,7 +44,7 @@ export function installMarketUI(context) {
     document.querySelector('.parity').insertAdjacentHTML('beforeend', '<a class="source-link" href="/launchpad-roadmap.txt" target="_blank" rel="noopener noreferrer">Implementation checklist</a>');
   }
   if (page === 'Terminal') {
-    content.innerHTML = `<div class="heading"><div><div class="eyebrow">${mode === 'demo' ? 'DEMO MARKET' : 'LOADED YEETNEST POOLS'}</div><h1>Terminal</h1></div><label class="terminal-search">${icon('search')}<input aria-label="Search terminal" placeholder="Search coins" /></label></div><div class="terminal-board"></div>`;
+    content.innerHTML = `<div class="heading"><div><div class="eyebrow">${mode === 'demo' ? 'DEMO MARKET' : 'LOADED MEMEPOP POOLS'}</div><h1>Terminal</h1></div><label class="terminal-search">${icon('search')}<input aria-label="Search terminal" placeholder="Search coins" /></label></div><div class="terminal-board"></div>`;
     const renderBoard = () => {
       const query = content.querySelector('input').value.trim().toLowerCase();
       const available = coins.filter(c => `${c.name} ${c.ticker} ${c.mint || ''}`.toLowerCase().includes(query));

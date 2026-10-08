@@ -134,7 +134,7 @@ async function setupForm({ esc, toast, reload }) {
       ["PINATA_JWT", "Pinata JWT", "password", "Public IPFS uploads"],
       [
         "PUBLIC_BASE_URL",
-        "Public YeetNest URL",
+        "Public MemePop URL",
         "url",
         "https://your-yeetnest-domain.com",
       ],

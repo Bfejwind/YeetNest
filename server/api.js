@@ -369,7 +369,7 @@ export function createApi({
       const wallet = address(req.body.wallet);
       const nonce = randomBytes(24).toString("hex");
       const domain = text(req.headers.host || '', 255);
-      const message = `YeetNest creator sign-in\nDomain: ${domain}\nWallet: ${wallet}\nNonce: ${nonce}\nExpires: ${new Date(Date.now() + 300000).toISOString()}\nThis is a sign-in message, not a transaction.`;
+      const message = `MemePop creator sign-in\nDomain: ${domain}\nWallet: ${wallet}\nNonce: ${nonce}\nExpires: ${new Date(Date.now() + 300000).toISOString()}\nThis is a sign-in message, not a transaction.`;
       await security.put('challenge', nonce, { wallet, message, domain, expires: Date.now() + 300000 });
       res.json({ nonce, message });
     }),
@@ -618,7 +618,7 @@ export function createApi({
     const rows = await chainIndex.list({ query, status, offset, limit });
     const registered = new Map((await records()).map(coin => [coin.mint, coin]));
     const state = (await persisted.get('launchlab-indexer'))[0];
-    res.json({ coins: rows.map(row => ({ ...registered.get(row.mint), id: row.mint, mint: row.mint, poolId: row.pool, creator: row.creator, name: registered.get(row.mint)?.name || row.name || `${row.mint.slice(0, 4)}...${row.mint.slice(-4)}`, ticker: registered.get(row.mint)?.ticker || row.ticker || 'TOKEN', decimals: row.decimals, pair: 'SOL', uri: row.uri, source: registered.has(row.mint) ? 'YeetNest' : 'External LaunchLab', launchStatus: ['Trading', 'Migrating', 'Graduated'][row.status], progress: Number(row.target) > 0 ? Math.min(100, Number(row.raised) / Number(row.target) * 100) : 0, raised: row.raised, target: row.target, supplyRaw: row.supply, created: row.created === null ? null : Number(row.created), updatedAt: Number(row.updated), slot: Number(row.slot) })), available: true, hasMore: rows.length === limit, offset, indexedAt: state?.updatedAt || null, indexerError: state?.error || null, historyComplete: Boolean(state?.backfillComplete) });
+    res.json({ coins: rows.map(row => ({ ...registered.get(row.mint), id: row.mint, mint: row.mint, poolId: row.pool, creator: row.creator, name: registered.get(row.mint)?.name || row.name || `${row.mint.slice(0, 4)}...${row.mint.slice(-4)}`, ticker: registered.get(row.mint)?.ticker || row.ticker || 'TOKEN', decimals: row.decimals, pair: 'SOL', uri: row.uri, source: registered.has(row.mint) ? 'MemePop' : 'External LaunchLab', launchStatus: ['Trading', 'Migrating', 'Graduated'][row.status], progress: Number(row.target) > 0 ? Math.min(100, Number(row.raised) / Number(row.target) * 100) : 0, raised: row.raised, target: row.target, supplyRaw: row.supply, created: row.created === null ? null : Number(row.created), updatedAt: Number(row.updated), slot: Number(row.slot) })), available: true, hasMore: rows.length === limit, offset, indexedAt: state?.updatedAt || null, indexerError: state?.error || null, historyComplete: Boolean(state?.backfillComplete) });
   }));
   app.get('/api/curve/:mint', route(async (req, res) => {
     const mint = address(req.params.mint);
@@ -647,7 +647,7 @@ export function createApi({
         const target = Number(pool.totalFundRaisingB.toString());
         return {
           ...coin,
-          source: 'YeetNest',
+          source: 'MemePop',
           progress:
             target > 0
               ? Math.min(100, (Number(pool.realB.toString()) / target) * 100)
