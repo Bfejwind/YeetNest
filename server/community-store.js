@@ -36,9 +36,9 @@ export function createCommunityStore({ databaseUrl, directory }) {
       if (!data.profiles[wallet] && Object.keys(data.profiles).length >= 5000) throw fail('Pilot profile capacity reached.', 503);
       return data.profiles[wallet] = { wallet, ...profile, updated: Date.now() };
     }),
-    listPosts: async mint => {
+    listPosts: async (mint, { offset = 0, limit = 50 } = {}) => {
       const data = await read();
-      return data.posts.filter(p => p.mint === mint && !p.deleted).slice(-50).reverse().map(p => ({ ...p, author: data.profiles[p.wallet]?.name || authorName(p.wallet) }));
+      return data.posts.filter(p => p.mint === mint && !p.deleted).reverse().slice(offset, offset + limit).map(p => ({ ...p, author: data.profiles[p.wallet]?.name || authorName(p.wallet) }));
     },
     addPost: (mint, wallet, body) => mutate(data => {
       if (data.posts.length >= 10000) throw fail('Pilot discussion capacity reached.', 503);
@@ -51,6 +51,17 @@ export function createCommunityStore({ databaseUrl, directory }) {
       if (!post) throw fail('Comment not found or not owned by this wallet.', 404);
       post.deleted = true;
       post.body = '';
+    }),
+    listReports: async () => {
+      const data = await read();
+      return data.reports.filter(r => r.status === 'pending').slice(0, 100).map(r => ({ ...r, comment: data.posts.find(p => p.id === r.post) }));
+    },
+    moderatePost: (id, moderator, action) => mutate(data => {
+      const pending = data.reports.filter(r => r.post === id && r.status === 'pending');
+      if (!pending.length) throw fail('Pending report not found.', 404);
+      const post = data.posts.find(p => p.id === id);
+      if (action === 'hide' && post) post.deleted = true;
+      for (const report of pending) Object.assign(report, { status: action === 'hide' ? 'resolved' : 'dismissed', moderated_by: moderator, moderated_at: Date.now() });
     }),
     reportPost: (id, wallet, reason) => mutate(data => {
       if (!data.posts.some(p => p.id === id && !p.deleted)) throw fail('Comment not found.', 404);
@@ -77,8 +88,8 @@ function postgresStore(connectionString) {
       const result = await pool.query('INSERT INTO community_profiles(wallet,name,bio,updated) VALUES($1,$2,$3,$4) ON CONFLICT(wallet) DO UPDATE SET name=EXCLUDED.name,bio=EXCLUDED.bio,updated=EXCLUDED.updated RETURNING wallet,name,bio,updated', [wallet, profile.name, profile.bio, Date.now()]);
       return { ...result.rows[0], updated: Number(result.rows[0].updated) };
     },
-    listPosts: async mint => {
-      const result = await pool.query('SELECT p.id,p.mint,p.wallet,p.body,p.created,u.name AS author FROM community_posts p LEFT JOIN community_profiles u ON u.wallet=p.wallet WHERE p.mint=$1 AND NOT p.deleted ORDER BY p.created DESC,p.id DESC LIMIT 50', [mint]);
+    listPosts: async (mint, { offset = 0, limit = 50 } = {}) => {
+      const result = await pool.query('SELECT p.id,p.mint,p.wallet,p.body,p.created,u.name AS author FROM community_posts p LEFT JOIN community_profiles u ON u.wallet=p.wallet WHERE p.mint=$1 AND NOT p.deleted ORDER BY p.created DESC,p.id DESC LIMIT $2 OFFSET $3', [mint, limit, offset]);
       return result.rows.map(post);
     },
     addPost: async (mint, wallet, body) => {
@@ -89,6 +100,20 @@ function postgresStore(connectionString) {
     deletePost: async (id, wallet) => {
       const result = await pool.query('UPDATE community_posts SET deleted=true,body=\'\' WHERE id=$1 AND wallet=$2 AND NOT deleted RETURNING id', [id, wallet]);
       if (!result.rowCount) throw fail('Comment not found or not owned by this wallet.', 404);
+    },
+    listReports: async () => (await pool.query(`SELECT r.post_id AS post,r.wallet,r.reason,r.created,r.status,
+      json_build_object('id',p.id,'mint',p.mint,'wallet',p.wallet,'body',p.body,'deleted',p.deleted) AS comment
+      FROM community_reports r JOIN community_posts p ON p.id=r.post_id WHERE r.status='pending' ORDER BY r.created,r.post_id LIMIT 100`)).rows,
+    moderatePost: async (id, moderator, action) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const result = await client.query("UPDATE community_reports SET status=$2,moderated_by=$3,moderated_at=$4 WHERE post_id=$1 AND status='pending' RETURNING post_id", [id, action === 'hide' ? 'resolved' : 'dismissed', moderator, Date.now()]);
+        if (!result.rowCount) throw fail('Pending report not found.', 404);
+        if (action === 'hide') await client.query('UPDATE community_posts SET deleted=true WHERE id=$1', [id]);
+        await client.query('COMMIT');
+      } catch (error) { await client.query('ROLLBACK'); throw error; }
+      finally { client.release(); }
     },
     reportPost: async (id, wallet, reason) => {
       const result = await pool.query('INSERT INTO community_reports(post_id,wallet,reason,created) SELECT id,$2,$3,$4 FROM community_posts WHERE id=$1 AND NOT deleted ON CONFLICT(post_id,wallet) DO UPDATE SET reason=community_reports.reason RETURNING post_id', [id, wallet, reason, Date.now()]);

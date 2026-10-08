@@ -101,6 +101,32 @@ test('shared community uses signed identity, owner deletion and private reports'
   });
 });
 
+test('moderation requires an allowlisted signed wallet and retains evidence privately', async () => {
+  const moderator = Keypair.generate(), user = Keypair.generate();
+  await withApi(async () => ok({}), async request => {
+    const login = async wallet => {
+      const challenge = await (await request('/auth/challenge', { wallet: wallet.publicKey.toBase58() })).json();
+      const signature = Buffer.from(nacl.sign.detached(Buffer.from(challenge.message), wallet.secretKey)).toString('base64');
+      const { token } = await (await request('/auth/verify', { nonce: challenge.nonce, signature })).json();
+      return { Authorization: `Bearer ${token}` };
+    };
+    const a = await login(user), admin = await login(moderator);
+    const endpoint = `/community/coins/${Keypair.generate().publicKey.toBase58()}/comments`;
+    const post = await (await request(endpoint, { body: 'Reported evidence' }, a)).json();
+    await request(`/community/comments/${post.id}/report`, { reason: 'spam' }, a);
+    assert.equal((await request('/moderation/reports')).status, 401);
+    assert.equal((await request('/moderation/reports', undefined, a)).status, 403);
+    const reports = await (await request('/moderation/reports', undefined, admin)).json();
+    assert.equal(reports[0].comment.body, 'Reported evidence');
+    assert.equal((await request(`/moderation/comments/${post.id}`, { action: 'hide' }, a)).status, 403);
+    assert.equal((await request(`/moderation/comments/${post.id}`, { action: 'invalid' }, admin)).status, 400);
+    assert.equal((await request(`/moderation/comments/${post.id}`, { action: 'hide' }, admin)).status, 200);
+    assert.deepEqual(await (await request(endpoint)).json(), []);
+    assert.deepEqual(await (await request('/moderation/reports', undefined, admin)).json(), []);
+    assert.equal((await request(endpoint + '?limit=101')).status, 400);
+  }, { MODERATOR_WALLETS: moderator.publicKey.toBase58() });
+});
+
 test('community JSON fallback persists and serializes concurrent writes', async () => {
   const { createCommunityStore } = await import('../server/community-store.js');
   const directory = await mkdtemp(join(tmpdir(), 'yeetnest-community-'));

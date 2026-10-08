@@ -4,6 +4,30 @@ import { PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { decodeLaunchlabEvents, LAUNCHLAB_PROGRAM, tradeAmounts } from '../server/launchlab-events.js';
 import { scanPage } from '../server/indexer-scan.js';
+import { indexerSettings } from '../server/indexer-config.js';
+import { retryDelay } from '../server/indexer-queue.js';
+
+test('indexer concurrency and polling are bounded and retries back off', () => {
+  assert.equal(indexerSettings({}).concurrency, 4);
+  assert.equal(indexerSettings({ INDEXER_ROLE: 'process' }).role, 'process');
+  assert.throws(() => indexerSettings({ INDEXER_CONCURRENCY: '0' }));
+  assert.throws(() => indexerSettings({ INDEXER_CONCURRENCY: '17' }));
+  assert.throws(() => indexerSettings({ INDEXER_ROLE: 'unknown' }));
+  assert.equal(retryDelay(1), 2000);
+  assert.equal(retryDelay(100), 300000);
+});
+
+test('scan cursors advance only after durable batch enqueue succeeds', async () => {
+  const state = { head: 'old' };
+  const rows = [{ signature: 'new', err: null }, { signature: 'bad', err: 'failed' }, { signature: 'old', err: null }];
+  const connection = { getSignaturesForAddress: async () => rows };
+  await assert.rejects(scanPage({ connection, state, enqueue: async () => { throw Error('Database down'); } }));
+  assert.deepEqual(state, { head: 'old' });
+  let queued;
+  const next = await scanPage({ connection, state, enqueue: async rows => { queued = rows; } });
+  assert.equal(next.head, 'new');
+  assert.deepEqual(queued.map(row => row.signature), ['new']);
+});
 
 function tradeBytes() {
   const bytes = Buffer.alloc(8 + 32 + 13 * 8 + 3);

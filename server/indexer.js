@@ -7,17 +7,25 @@ import { scanPage } from './indexer-scan.js';
 import pg from 'pg';
 import { databaseConfig } from './database-config.js';
 import { LaunchpadPool, getPdaLaunchpadPoolId } from '@raydium-io/raydium-sdk-v2';
+import { createIndexerQueue } from './indexer-queue.js';
+import { indexerSettings } from './indexer-config.js';
+import { setTimeout as delay } from 'node:timers/promises';
 
 if (!process.env.DATABASE_URL || !process.env.SOLANA_RPC_URL) throw new Error('Indexer requires DATABASE_URL and SOLANA_RPC_URL.');
-const connection = new Connection(process.env.SOLANA_RPC_URL, { commitment: 'finalized', disableRetryOnRateLimit: true, fetch: (url, options) => fetch(url, { ...options, signal: AbortSignal.timeout(25000) }) });
+const settings = indexerSettings(process.env);
+const shutdown = new AbortController();
+const connection = new Connection(process.env.SOLANA_RPC_URL, { commitment: 'finalized', disableRetryOnRateLimit: true, fetch: (url, options) => fetch(url, { ...options, signal: AbortSignal.any([shutdown.signal, AbortSignal.timeout(25000)]) }) });
 const program = new PublicKey(LAUNCHLAB_PROGRAM);
 const records = createAppStore({ databaseUrl: process.env.DATABASE_URL });
 const index = createChainIndexStore(process.env.DATABASE_URL);
+const queue = createIndexerQueue(process.env.DATABASE_URL);
 const lock = new pg.Client(databaseConfig(process.env.DATABASE_URL));
 let stopping = false;
-process.on('SIGTERM', () => { stopping = true; });
-process.on('SIGINT', () => { stopping = true; });
-lock.on('error', () => { stopping = true; });
+const stop = () => { stopping = true; shutdown.abort(); };
+process.on('SIGTERM', stop);
+process.on('SIGINT', stop);
+lock.on('error', stop);
+const pause = ms => delay(ms, undefined, { signal: shutdown.signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
 async function processSignature(row) {
   const transaction = await connection.getTransaction(row.signature, { maxSupportedTransactionVersion: 0, commitment: 'finalized' });
   if (!transaction) throw new Error('Finalized transaction not available; cursor retained for retry.');
@@ -37,17 +45,27 @@ async function processSignature(row) {
   }
 }
 try {
-  await lock.connect();
-  const result = await lock.query('SELECT pg_try_advisory_lock(741922) AS acquired');
-  if (!result.rows[0].acquired) throw new Error('A LaunchLab indexer is already running.');
-  await Promise.all([records.ready(), index.ready()]);
+  if (settings.role !== 'process') await lock.connect();
+  await Promise.all([records.ready(), index.ready(), queue.ready()]);
   if (await connection.getGenesisHash() !== '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d') throw new Error('Indexer requires Solana mainnet.');
   let state = (await records.get('launchlab-indexer'))[0] || {};
-  while (!stopping) {
+  let leader = false;
+  async function scanOnce() {
+    if (settings.role === 'process' || stopping) return;
+    if (!leader) {
+      const result = await lock.query('SELECT pg_try_advisory_lock(741922) AS acquired');
+      leader = result.rows[0].acquired;
+      if (!leader) return;
+      state = (await records.get('launchlab-indexer'))[0] || {};
+    }
     try {
+      const stats = await queue.stats();
+      if (stats.pending + stats.processing >= settings.maxJobs) return;
       for (const backfill of [false, true]) {
         if (stopping) break;
-        state = await scanPage({ connection, program, state, processSignature, backfill });
+        // Reserve headroom for live scans; suspend historical backfill under pressure.
+        if (backfill && stats.pending + stats.processing >= settings.maxJobs / 2) continue;
+        state = await scanPage({ connection, program, state, enqueue: queue.enqueue, backfill, limit: settings.pageSize });
         await records.mutate('launchlab-indexer', entries => { entries.splice(0, entries.length, { ...state, updatedAt: Date.now(), error: null }); });
       }
     } catch (error) {
@@ -55,7 +73,35 @@ try {
       console.error('Indexer checkpoint retained for retry.', error.name, typeof error.code === 'number' || /^[A-Z0-9_]{1,30}$/.test(String(error.code)) ? error.code : 'NO_CODE');
       if (process.env.INDEXER_ONCE === 'true') process.exitCode = 1;
     }
-    if (process.env.INDEXER_ONCE === 'true') break;
-    if (!stopping) await new Promise(resolve => setTimeout(resolve, 15000));
   }
-} finally { await Promise.all([records.close(), index.close(), lock.end()]); }
+  async function processOne() {
+    const job = await queue.claim();
+    if (!job) return false;
+    const heartbeat = setInterval(() => {
+      queue.renew(job).catch(() => console.error('Indexer lease renewal failed.'));
+    }, 30000);
+    try {
+      await processSignature(job.payload);
+      if (!await queue.complete(job)) console.error('Indexer lease expired; replay remains deduplicated.');
+    } catch (error) {
+      await queue.fail(job, typeof error.code === 'number' ? error.code : 'PROCESSING_ERROR');
+      console.error('Indexing job retained for retry.', typeof error.code === 'number' ? error.code : 'PROCESSING_ERROR');
+      if (process.env.INDEXER_ONCE === 'true') process.exitCode = 1;
+    } finally { clearInterval(heartbeat); }
+    return true;
+  }
+  if (process.env.INDEXER_ONCE === 'true') {
+    await scanOnce();
+    if (settings.role !== 'scan') await Promise.all(Array.from({ length: settings.concurrency }, () => processOne()));
+  } else {
+    const loops = [];
+    if (settings.role !== 'process') loops.push((async () => {
+      while (!stopping) { await scanOnce(); await pause(settings.scanInterval); }
+    })());
+    if (settings.role !== 'scan') for (let i = 0; i < settings.concurrency; i++) loops.push((async () => {
+      while (!stopping) { if (!await processOne()) await pause(1000); }
+    })());
+    try { await Promise.all(loops); }
+    catch (error) { stop(); await Promise.allSettled(loops); throw error; }
+  }
+} finally { await Promise.all([records.close(), index.close(), queue.close(), lock.end()]); }

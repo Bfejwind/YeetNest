@@ -45,6 +45,11 @@ test('curve transaction validator rejects changed side, amounts and destinations
   const keys = transaction.message.getAccountKeys();
   const expected = { owner: owner.toBase58(), program: program.toBase58(), side: 'Buy', input: '100', minimum: '90', pool: accounts[4].toBase58(), userA: accounts[5].toBase58(), userB: accounts[6].toBase58(), vaultA: accounts[7].toBase58(), vaultB: accounts[8].toBase58(), mintA: accounts[9].toBase58(), mintB: accounts[10].toBase58() };
   validateCurveInstruction(transaction, keys, expected);
+  const canonicalAccounts = accounts.map(account => account.toBase58());
+  validateCurveInstruction(transaction, keys, { ...expected, accounts: canonicalAccounts });
+  assert.throws(() => validateCurveInstruction(transaction, keys, { ...expected, accounts: canonicalAccounts.slice(1) }), /account count/);
+  const changedAuthority = [...canonicalAccounts]; changedAuthority[1] = owner.toBase58();
+  assert.throws(() => validateCurveInstruction(transaction, keys, { ...expected, accounts: changedAuthority }), /authority or configuration/);
   for (const changed of [{ side: 'Sell' }, { input: '101' }, { minimum: '89' }, { vaultA: owner.toBase58() }, { userB: owner.toBase58() }]) assert.throws(() => validateCurveInstruction(transaction, keys, { ...expected, ...changed }));
   const curve = new TransactionInstruction({ programId: program, keys: accounts.map((pubkey, i) => ({ pubkey, isSigner: i === 0, isWritable: true })), data: Buffer.from(data) });
   const withTransfer = destination => new VersionedTransaction(new TransactionMessage({ payerKey: owner, recentBlockhash: Keypair.generate().publicKey.toBase58(), instructions: [SystemProgram.transfer({ fromPubkey: owner, toPubkey: destination, lamports: 100 }), curve] }).compileToV0Message());

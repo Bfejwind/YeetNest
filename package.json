@@ -10,7 +10,7 @@
     "indexer": "node server/indexer.js",
     "db:migrate": "node server/migrate.js",
     "db:import-catalogue": "node server/import-catalogue.js",
-    "test": "node --test tests/amounts.test.js tests/api.test.js tests/app-store.test.js tests/buffers.test.js tests/wallet-links.test.js tests/transactions.test.js tests/security-store.test.js tests/indexer.test.js",
+    "test": "node --test tests/amounts.test.js tests/api.test.js tests/app-store.test.js tests/buffers.test.js tests/wallet-links.test.js tests/transactions.test.js tests/security-store.test.js tests/indexer.test.js tests/launch-validation.test.js",
     "test:postgres": "node --test tests/postgres.test.js",
     "test:ui": "playwright test"
   },

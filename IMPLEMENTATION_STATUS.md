@@ -1,6 +1,22 @@
-# YeetNest Implementation Status
+# MemePop Implementation Status
 
-October 7, 2026. Local workspace changes, not a claim of deployment or production readiness.
+October 8, 2026. Local workspace changes, not a claim of deployment or production readiness.
+
+## October 8 Update
+
+Implemented a scaling foundation while preserving Raydium LaunchLab/Jupiter rather than changing to Pump contracts:
+
+- PostgreSQL job queue with batch enqueue before cursor advancement, concurrent `SKIP LOCKED` claims, expiring renewable leases, exponential retries and retained failed jobs. Signature/event writes remain idempotent. This is at-least-once processing, not exactly-once execution.
+- Scanner leader election with independently scalable processing workers, bounded concurrency and backpressure that pauses historical work before live scanning. API status now includes pending/processing/failed queue metrics; queued or failed work prevents a complete-history claim.
+- Launch transactions are compared with a freshly reconstructed canonical SDK initialization instruction, including reviewed metadata, economics and account identities. Unexpected transfers, extra launches/signers and excessive priority fees are rejected. Launch review displays actual supply, curve allocation, fundraising target and estimated fees.
+- Curve trades also enforce canonical authority/configuration/fee-vault accounts and priority/network fee caps. Live sell shortcuts calculate 25/50/75/100 percent from raw integer wallet balances.
+- Signed-wallet moderator allowlist, private report review screen, hide/dismiss actions and persistent moderation attribution. Hidden comment evidence is retained privately. Public comments have bounded pagination and a load-older control.
+- Curve candles query the latest 24 hours instead of scanning all historical trades on every request; an indexed time window supports that query. This is not yet a pre-aggregated high-volume candle pipeline.
+- Migrations `005-indexer-jobs.sql` and `006-moderation.sql` applied successfully to the configured database. No existing application data was removed.
+
+See [SCALE_AND_PARITY.md](SCALE_AND_PARITY.md) for exact rollout settings, remaining engineering work and production acceptance gates. The historical sections below describe the previous revision; this update supersedes their single-worker restriction, missing moderation, missing percentage sells and old test counts.
+
+Verification for this update: 29 unit/API tests, 5 real PostgreSQL tests and 19 browser tests passed; production build passed with existing large-bundle warnings. Browser coverage includes explicit moderator sign-in, escaped report content, hide actions and mobile layout. Funded creation/trading/migration/claims and Pump.fun-scale load tests remain unperformed.
 
 ## Changes In This Revision
 

@@ -1,6 +1,8 @@
 import { SystemInstruction, TransactionInstruction } from '@solana/web3.js';
+import { validateComputeBudget } from './launch-validation.js';
 
 export function validateCurveInstruction(transaction, keys, expected) {
+  validateComputeBudget(transaction.message.compiledInstructions, keys);
   const allowed = new Set([expected.program, '11111111111111111111111111111111', 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA', 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL', 'ComputeBudget111111111111111111111111111111']);
   if (transaction.message.compiledInstructions.filter(ix => keys.get(ix.programIdIndex)?.toBase58() === expected.program).length !== 1) throw new Error('Unexpected number of curve instructions.');
   for (const ix of transaction.message.compiledInstructions) {
@@ -18,6 +20,12 @@ export function validateCurveInstruction(transaction, keys, expected) {
     if (keys.get(instruction.accountKeyIndexes[index])?.toBase58() !== address) throw new Error('Curve transaction destination accounts changed.');
   }
   const userB = keys.get(instruction.accountKeyIndexes[6])?.toBase58();
+  if (expected.accounts) {
+    if (instruction.accountKeyIndexes.length !== expected.accounts.length) throw new Error('Unexpected curve account count.');
+    expected.accounts.forEach((address, index) => {
+      if (address && keys.get(instruction.accountKeyIndexes[index])?.toBase58() !== address) throw new Error('Curve authority or configuration accounts changed.');
+    });
+  }
   let systemDebit = 0n;
   for (const ix of transaction.message.compiledInstructions) {
     const program = keys.get(ix.programIdIndex)?.toBase58();

@@ -204,7 +204,7 @@ function render() {
       )
       .join(
         "",
-      )}<button class="nav-item" data-launch title="Launch a coin">${I("circle-plus")}<span>Launch a coin</span>${I("arrow-up-right")}</button></nav><div class="sidebar-note"><span class="little-egg">${I("egg")}</span><h3>Small beginnings.<br>Big yeet energy.</h3><p>Your next idea belongs here.</p><button data-launch>Build your nest ${I("arrow-up-right")}</button></div><div class="sidebar-bottom"><span>Independent. Non-custodial.</span><button id="help">About MemePop ${I("arrow-up-right")}</button><span>© 2026 MemePop</span></div></aside><main><header><div class="breadcrumb">The market <span>/</span> <b>${page}</b></div><div class="header-right"><div class="mode-switch" aria-label="Trading environment"><button data-mode="demo" class="${mode === "demo" ? "active" : ""}">Demo</button><button data-mode="live" class="${mode === "live" ? "active" : ""}"><span class="live-dot"></span> Live</button></div><button class="wallet" id="wallet">${I("wallet")} ${connected() ? (mode === "demo" ? `${demoBalance.toFixed(2)} SOL · Demo` : esc(short(address))) : "Connect wallet"}</button></div></header><div class="content">${
+      )}<button class="nav-item" data-launch title="Launch a coin">${I("circle-plus")}<span>Launch a coin</span>${I("arrow-up-right")}</button></nav><div class="sidebar-note"><span class="little-egg">${I("egg")}</span><h3>Small beginnings.<br>Big yeet energy.</h3><p>Your next idea belongs here.</p><button data-launch>Build your nest ${I("arrow-up-right")}</button></div><div class="sidebar-bottom"><span>Independent. Non-custodial.</span><button id="help">About MemePop ${I("arrow-up-right")}</button><span>© 2026 MemePop</span></div></aside><main><header><div class="breadcrumb">The market <span>/</span> <b>${page}</b></div><div class="header-right"><div class="mode-switch" aria-label="Trading environment"><button data-mode="demo" class="${mode === "demo" ? "active" : ""}">Demo</button><button data-mode="live" class="${mode === "live" ? "active" : ""}"><span class="live-dot"></span> Live</button></div><button class="wallet" id="wallet">${I("wallet")} ${connected() ? (mode === "demo" ? "Demo wallet" : esc(short(address))) : "Connect wallet"}</button></div></header><div class="content">${
       page === "Integrations"
         ? integrations()
         : `
@@ -239,6 +239,7 @@ function render() {
       "layers",
     ],
   ]
+    .filter(([label]) => mode !== 'demo' || label !== 'Your SOL balance')
     .map(
       ([a, b, c, d]) =>
         `<div class="stat"><div>${a}${I(d)}</div><strong>${b}</strong><span>${c}</span></div>`,
@@ -279,7 +280,7 @@ function render() {
       refreshLive();
     },
   });
-  installMarketUI({ page, mode, coins: allCoins(), esc, money, image, openCoin: detail, toast, setWatchlist: values => { watchlist = values; render(); }, navigate: next => { page = next; render(); } });
+  installMarketUI({ page, mode, moderation: config?.moderationService, coins: allCoins(), esc, money, image, openCoin: detail, toast, setWatchlist: values => { watchlist = values; render(); }, navigate: next => { page = next; render(); } });
   if (chain.hostedDemo) document.querySelector(".content").insertAdjacentHTML("afterbegin", '<div class="notice">Online demo. Launches, artwork and simulated trades stay in this browser. Mainnet trading is not enabled.</div>');
   createIcons({ icons });
 }
@@ -686,7 +687,7 @@ function inlineError(error) {
 function walletModal() {
   if (connected()) {
     modal(
-      `<span class="eyebrow">${mode === "demo" ? "DEMO WALLET" : "LIVE WALLET"}</span><h2>Your portfolio.</h2><p class="address">${mode === "demo" ? "Local demo wallet" : esc(chain.publicKey.toBase58())}</p><div class="wallet-balance">${mode === "demo" ? demoBalance.toFixed(4) : solBalance == null ? "--" : solBalance.toFixed(4)} <span>SOL</span></div><button class="secondary full" id="disconnect">Disconnect</button>`,
+      `<span class="eyebrow">${mode === "demo" ? "DEMO WALLET" : "LIVE WALLET"}</span><h2>Your portfolio.</h2><p class="address">${mode === "demo" ? "Local demo wallet" : esc(chain.publicKey.toBase58())}</p>${mode === "live" ? `<div class="wallet-balance">${solBalance == null ? "--" : solBalance.toFixed(4)} <span>SOL</span></div>` : ""}<button class="secondary full" id="disconnect">Disconnect</button>`,
       () => {
         document.querySelector("#disconnect").onclick = async () => {
           if (mode === "demo") demoWallet = false;
@@ -703,7 +704,7 @@ function walletModal() {
     return;
   }
   modal(
-    `<span class="eyebrow">JOIN THE FLOCK</span><h2>Connect your wallet</h2><p>${mode === "demo" ? "Demo mode uses local funds." : "Solana mainnet. Your keys stay in your wallet."}</p>${mode === "demo" ? `<button class="wallet-option" id="demo">${I("flask-conical")} Demo wallet <span>${demoBalance.toFixed(2)} SOL</span></button>` : ["Phantom", "Solflare"].map((n) => `<button class="wallet-option" data-wallet="${n}">${I(n === "Phantom" ? "ghost" : "sun")} ${n} ${I("arrow-up-right")}</button>`).join("")}<p class="form-error" id="form-error" role="alert"></p>`,
+    `<span class="eyebrow">JOIN THE FLOCK</span><h2>Connect your wallet</h2><p>${mode === "demo" ? "Demo mode uses local funds." : "Solana mainnet. Your keys stay in your wallet."}</p>${mode === "demo" ? `<button class="wallet-option" id="demo">${I("flask-conical")} Demo wallet</button>` : ["Phantom", "Solflare"].map((n) => `<button class="wallet-option" data-wallet="${n}">${I(n === "Phantom" ? "ghost" : "sun")} ${n} ${I("arrow-up-right")}</button>`).join("")}<p class="form-error" id="form-error" role="alert"></p>`,
     () => {
       const demo = document.querySelector("#demo");
       if (demo)
@@ -943,7 +944,7 @@ function launch() {
 }
 function reviewLaunch(prepared, metadata, d) {
   modal(
-    `<span class="eyebrow">LIVE LAUNCH / REVIEW</span><h2>Ready to make it pop?</h2><div class="detail-heading"><img src="${esc(metadata.image)}" alt="${esc(d.name)}"/><div><h3>${esc(d.name)}</h3><span>$${esc(d.ticker.toUpperCase())}</span></div></div><div class="launch-terms"><span>Network <b>Solana mainnet</b></span><span>Supply <b>${prepared.supply}</b></span><span>Transactions <b>${prepared.transactions}</b></span><span>Initial buy <b>None</b></span></div><p class="address">Mint: ${esc(prepared.mint)}</p><p class="fine">Review transactions and network fees in your wallet. Raydium's default platform economics apply. Wallet confirmation submits a real token launch.</p><p class="form-error" id="form-error"></p><button class="primary full" id="sign-launch">${I("pen-line")} Sign and launch</button>`,
+    `<span class="eyebrow">LIVE LAUNCH / REVIEW</span><h2>Ready to make it pop?</h2><div class="detail-heading"><img src="${esc(metadata.image)}" alt="${esc(d.name)}"/><div><h3>${esc(d.name)}</h3><span>$${esc(d.ticker.toUpperCase())}</span></div></div><div class="launch-terms"><span>Network <b>Solana mainnet</b></span><span>Supply <b>${prepared.supply}</b></span><span>Transactions <b>${prepared.transactions}</b></span><span>Initial buy <b>None</b></span>${prepared.economics ? `<span>Curve allocation <b>${esc(prepared.economics.curveSupply)} tokens</b></span><span>Fundraising target <b>${esc(prepared.economics.fundraisingTarget)} SOL</b></span><span>Migration fee <b>${esc(prepared.economics.migrationFee)} SOL</b></span><span>Protocol / platform / creator trading fees <b>${esc(prepared.economics.protocolFeePercent)}% / ${esc(prepared.economics.platformFeePercent)}% / ${esc(prepared.economics.creatorFeePercent)}%</b></span><span>Estimated network fees <b>${esc(prepared.economics.networkFees)} SOL</b></span>` : ""}</div><p class="address">Mint: ${esc(prepared.mint)}</p><p class="fine">Review transactions and network fees in your wallet. Raydium's default platform economics apply. Wallet confirmation submits a real token launch.</p><p class="form-error" id="form-error"></p><button class="primary full" id="sign-launch">${I("pen-line")} Sign and launch</button>`,
     () => {
       document.querySelector("#sign-launch").onclick = async (e) => {
         const b = e.currentTarget;
@@ -1054,18 +1055,32 @@ function detail(id) {
           evidence.querySelector('#largest-accounts').innerHTML = result.accounts.map(account => `<div class="health-check"><a href="https://solscan.io/account/${esc(account.address)}" target="_blank" rel="noopener noreferrer">${esc(short(account.address))}</a><small>${esc(fromUnits(account.amount, account.decimals))}</small></div>`).join('') || '<p class="muted">No token account data available.</p>';
         }).catch(() => { if (evidence.isConnected) evidence.querySelector('#largest-accounts').textContent = 'Token account data unavailable.'; });
       }
-      document
-        .querySelectorAll("[data-amount]")
-        .forEach(
-          (b) =>
-            (b.onclick = () =>
-              (document.querySelector("[name=amount]").value =
-                b.dataset.amount)),
-        );
+      const quickAmounts = document.querySelector('.quick-amounts');
+      const renderQuickAmounts = () => {
+        const selling = mode === 'live' && side === 'Sell';
+        quickAmounts.innerHTML = (selling ? [25, 50, 75, 100] : [0.1, 0.5, 1, 2]).map(value => `<button type="button" data-value="${value}">${value}${selling ? '%' : ''}</button>`).join('');
+        quickAmounts.querySelectorAll('button').forEach(button => button.onclick = async () => {
+          if (!selling) { document.querySelector('[name=amount]').value = button.dataset.value; return; }
+          const wallet = chain.publicKey?.toBase58();
+          if (!wallet) { walletModal(); return; }
+          button.disabled = true;
+          try {
+            const token = (await chain.balances()).tokens.find(token => token.mint === coin.mint);
+            if (chain.publicKey?.toBase58() !== wallet || !quickAmounts.isConnected || side !== 'Sell') return;
+            if (!token) throw new Error('No token balance available.');
+            const raw = BigInt(token.amount) * BigInt(button.dataset.value) / 100n;
+            if (!raw) throw new Error('Selected amount rounds to zero.');
+            document.querySelector('[name=amount]').value = fromUnits(raw.toString(), token.decimals);
+          } catch (error) { document.querySelector('#form-error').textContent = error.message; }
+          finally { button.disabled = false; }
+        });
+      };
+      renderQuickAmounts();
       document.querySelectorAll("[data-side]").forEach(
         (b) =>
           (b.onclick = () => {
             side = b.dataset.side;
+            renderQuickAmounts();
             document
               .querySelectorAll("[data-side]")
               .forEach((t) => t.classList.toggle("selected", t === b));

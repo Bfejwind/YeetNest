@@ -31,7 +31,7 @@ test('live community signs in explicitly and uses shared endpoints', async ({ pa
     return fulfill(route, { wallet, ...saved });
   });
   let posts = [];
-  await page.route('**/api/community/coins/*/comments', route => {
+  await page.route('**/api/community/coins/*/comments*', route => {
     if (route.request().method() === 'POST') {
       expect(route.request().headers().authorization).toBe('Bearer controlled-test-session');
       posts = [{ id: '11111111-1111-4111-8111-111111111111', wallet, author: saved.name, body: route.request().postDataJSON().body, created: Date.now() }];
@@ -61,6 +61,42 @@ test('live community signs in explicitly and uses shared endpoints', async ({ pa
   await page.getByRole('button', { name: 'Delete your comment' }).click();
   await expect(page.locator('.discussion-post')).toHaveCount(0);
   expect(errors).toEqual([]);
+});
+
+test('moderation explicitly signs in and hides reported comments without rendering HTML', async ({ page }) => {
+  const wallet = Keypair.generate().publicKey.toBase58();
+  const mint = Keypair.generate().publicKey.toBase58();
+  await page.addInitScript(address => {
+    window.__moderationSigns = 0;
+    window.phantom = { solana: { connect: async () => ({ publicKey: { toString: () => address } }), signMessage: async () => { window.__moderationSigns++; return { signature: new Uint8Array(64) }; }, on: () => {} } };
+  }, wallet);
+  await page.route('**/api/status', route => route.fulfill({ json: { moderationService: true } }));
+  await page.route('**/api/tokens*', route => route.fulfill({ json: [] }));
+  await page.route('**/api/launches*', route => route.fulfill({ json: [] }));
+  await page.route('**/api/auth/challenge', route => route.fulfill({ json: { nonce: 'moderation', message: 'Moderation login' } }));
+  await page.route('**/api/auth/verify', route => route.fulfill({ json: { token: 'moderator-session' } }));
+  let reports = [{ post: '11111111-1111-4111-8111-111111111111', reason: 'spam', comment: { wallet, mint, body: '<img src=x onerror=alert(1)>' } }];
+  await page.route('**/api/moderation/reports', route => {
+    expect(route.request().headers().authorization).toBe('Bearer moderator-session');
+    return route.fulfill({ json: reports });
+  });
+  await page.route('**/api/moderation/comments/*', route => {
+    expect(route.request().postDataJSON().action).toBe('hide');
+    reports = []; return route.fulfill({ json: { moderated: true } });
+  });
+  await page.goto('/');
+  await page.locator('[data-mode="live"]').click();
+  await page.locator('#wallet').click();
+  await page.locator('[data-wallet="Phantom"]').click();
+  await page.getByRole('button', { name: 'Moderation', exact: true }).click();
+  expect(await page.evaluate(() => window.__moderationSigns)).toBe(0);
+  await page.getByRole('button', { name: 'Review reports' }).click();
+  await expect(page.locator('.moderation-reports .discussion-post p')).toHaveText('<img src=x onerror=alert(1)>');
+  await expect(page.locator('.moderation-reports img')).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole('button', { name: 'Hide comment' }).click();
+  await expect(page.locator('.moderation-reports')).toHaveText('No pending reports.');
 });
 
 test('market board, leaderboard, profile and local discussion work without pretending shared state', async ({ page }) => {

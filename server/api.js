@@ -13,6 +13,7 @@ import { createAppStore } from './app-store.js';
 import { PNG } from 'pngjs';
 import { createSecurityStore } from './security-store.js';
 import { createChainIndexStore } from './chain-index-store.js';
+import { createIndexerQueue } from './indexer-queue.js';
 
 const address = (value) => {
   try {
@@ -56,6 +57,7 @@ export function createApi({
 } = {}) {
   config = config.LOCAL_SETUP_ENABLED === 'false' ? { ...config } : { ...config, ...readSettings(storageDir) };
   const app = express();
+  const moderators = [...new Set((config.MODERATOR_WALLETS || '').split(',').map(value => value.trim()).filter(Boolean).map(address))];
   const proxyHops = Number(config.TRUST_PROXY_HOPS || 0);
   if (!Number.isInteger(proxyHops) || proxyHops < 0 || proxyHops > 2) throw new Error('TRUST_PROXY_HOPS must be 0, 1 or 2.');
   app.set('trust proxy', proxyHops);
@@ -63,15 +65,22 @@ export function createApi({
   const persisted = createAppStore({ databaseUrl: config.DATABASE_URL, directory: storageDir });
   const security = createSecurityStore(persisted, Date.now, config.DATABASE_URL);
   const chainIndex = createChainIndexStore(config.DATABASE_URL);
+  const indexQueue = config.DATABASE_URL ? createIndexerQueue(config.DATABASE_URL) : null;
+  let queueMetricsCache;
+  const queueMetrics = async () => {
+    if (!indexQueue) return null;
+    if (!queueMetricsCache || queueMetricsCache.expires <= Date.now()) queueMetricsCache = { data: await indexQueue.stats(), expires: Date.now() + 15000 };
+    return queueMetricsCache.data;
+  };
   let lastSecurityPrune = 0;
   app.locals.ready = async () => {
-    await Promise.all([community.ready(), persisted.ready(), security.ready(), chainIndex?.ready()]);
+    await Promise.all([community.ready(), persisted.ready(), security.ready(), chainIndex?.ready(), indexQueue?.ready()]);
     if (Date.now() - lastSecurityPrune > 60000) {
       await security.prune();
       lastSecurityPrune = Date.now();
     }
   };
-  app.locals.close = () => Promise.all([community.close(), persisted.close(), security.close(), chainIndex?.close()]);
+  app.locals.close = () => Promise.all([community.close(), persisted.close(), security.close(), chainIndex?.close(), indexQueue?.close()]);
   const limits = new Map();
   const marketCache = new Map();
   const images = new Map();
@@ -203,7 +212,7 @@ export function createApi({
     next();
   });
   app.use("/api", express.json({ limit: "4mb" }));
-  installCommunity(app, { store: community, auth, security, address, text, route, fail });
+  installCommunity(app, { store: community, auth, security, address, text, route, fail, moderators });
   app.get('/api/watchlist', route(async (req, res) => res.json(await persisted.get(`watchlist:${await auth(req)}`))));
   app.put('/api/watchlist', route(async (req, res) => {
     const wallet = await auth(req);
@@ -250,7 +259,7 @@ export function createApi({
       communityStorage: community.kind,
       catalogueStorage: persisted.kind,
       community: true,
-      moderationService: false,
+      moderationService: moderators.length > 0,
     }),
   );
   app.post(
@@ -609,6 +618,11 @@ export function createApi({
     res.json({ trades: (data.data || []).slice(0, 20).map(row => row.attributes), source: 'GeckoTerminal', updatedAt: Date.now() });
   }));
   let indexed = { coins: [], expires: 0 };
+  app.get('/api/indexer/status', route(async (req, res) => {
+    const state = (await persisted.get('launchlab-indexer'))[0];
+    const jobs = await queueMetrics();
+    res.json({ enabled: Boolean(indexQueue), scannedAt: state?.updatedAt || null, scanError: state?.error || null, scanBackfillComplete: Boolean(state?.backfillComplete), jobs, historyComplete: Boolean(state?.backfillComplete && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
+  }));
   app.get('/api/launches/indexed', route(async (req, res) => {
     const offset = Number(req.query.offset || 0), limit = Number(req.query.limit || 24);
     const status = req.query.status === undefined ? undefined : Number(req.query.status);
@@ -618,7 +632,8 @@ export function createApi({
     const rows = await chainIndex.list({ query, status, offset, limit });
     const registered = new Map((await records()).map(coin => [coin.mint, coin]));
     const state = (await persisted.get('launchlab-indexer'))[0];
-    res.json({ coins: rows.map(row => ({ ...registered.get(row.mint), id: row.mint, mint: row.mint, poolId: row.pool, creator: row.creator, name: registered.get(row.mint)?.name || row.name || `${row.mint.slice(0, 4)}...${row.mint.slice(-4)}`, ticker: registered.get(row.mint)?.ticker || row.ticker || 'TOKEN', decimals: row.decimals, pair: 'SOL', uri: row.uri, source: registered.has(row.mint) ? 'MemePop' : 'External LaunchLab', launchStatus: ['Trading', 'Migrating', 'Graduated'][row.status], progress: Number(row.target) > 0 ? Math.min(100, Number(row.raised) / Number(row.target) * 100) : 0, raised: row.raised, target: row.target, supplyRaw: row.supply, created: row.created === null ? null : Number(row.created), updatedAt: Number(row.updated), slot: Number(row.slot) })), available: true, hasMore: rows.length === limit, offset, indexedAt: state?.updatedAt || null, indexerError: state?.error || null, historyComplete: Boolean(state?.backfillComplete) });
+    const jobs = await queueMetrics();
+    res.json({ coins: rows.map(row => ({ ...registered.get(row.mint), id: row.mint, mint: row.mint, poolId: row.pool, creator: row.creator, name: registered.get(row.mint)?.name || row.name || `${row.mint.slice(0, 4)}...${row.mint.slice(-4)}`, ticker: registered.get(row.mint)?.ticker || row.ticker || 'TOKEN', decimals: row.decimals, pair: 'SOL', uri: row.uri, source: registered.has(row.mint) ? 'MemePop' : 'External LaunchLab', launchStatus: ['Trading', 'Migrating', 'Graduated'][row.status], progress: Number(row.target) > 0 ? Math.min(100, Number(row.raised) / Number(row.target) * 100) : 0, raised: row.raised, target: row.target, supplyRaw: row.supply, created: row.created === null ? null : Number(row.created), updatedAt: Number(row.updated), slot: Number(row.slot) })), available: true, hasMore: rows.length === limit, offset, indexedAt: state?.updatedAt || null, indexerError: jobs?.failed ? 'INDEXING_JOBS_FAILED' : state?.error || null, jobs, historyComplete: Boolean(state?.backfillComplete && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
   }));
   app.get('/api/curve/:mint', route(async (req, res) => {
     const mint = address(req.params.mint);

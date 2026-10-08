@@ -30,6 +30,8 @@ services:
         sync: false
       - key: PUBLIC_BASE_URL
         sync: false
+      - key: MODERATOR_WALLETS
+        sync: false
   - type: worker
     name: yeetnest-launchlab-indexer
     runtime: node
@@ -45,3 +47,13 @@ services:
         sync: false
       - key: SOLANA_RPC_URL
         sync: false
+      - key: INDEXER_ROLE
+        value: all
+      - key: INDEXER_CONCURRENCY
+        value: "4"
+      - key: INDEXER_PAGE_SIZE
+        value: "100"
+      - key: INDEXER_SCAN_INTERVAL_MS
+        value: "2000"
+      - key: INDEXER_MAX_PENDING
+        value: "10000"

@@ -8,11 +8,12 @@ function read(key, fallback) {
   catch { return fallback; }
 }
 const profile = () => read('yn-profile', { name: 'Anonymous', bio: '' });
+let moderationSnapshot = null;
 
 export function installMarketUI(context) {
   const { page, navigate, esc, mode, coins, money, openCoin, image, toast } = context;
   const nav = document.querySelector('nav');
-  for (const [name, glyph] of [['Terminal', 'columns-3'], ['Leaderboard', 'trophy'], ['Profile', 'user-round']]) {
+  for (const [name, glyph] of [['Terminal', 'columns-3'], ['Leaderboard', 'trophy'], ['Profile', 'user-round'], ...(mode === 'live' && context.moderation ? [['Moderation', 'shield']] : [])]) {
     const button = document.createElement('button');
     button.className = `nav-item ${page === name ? 'active' : ''}`;
     button.title = name;
@@ -21,6 +22,38 @@ export function installMarketUI(context) {
     nav.insertBefore(button, nav.lastElementChild);
   }
   const content = document.querySelector('.content');
+  if (page === 'Moderation') {
+    content.innerHTML = `<div class="heading"><h1>Moderation</h1><button class="primary" id="load-reports">${icon('refresh-cw')} Review reports</button></div><p class="form-error" role="alert"></p><div class="moderation-reports"></div>`;
+    const showReports = reports => {
+      content.querySelector('.moderation-reports').innerHTML = reports.map(report => `<article class="discussion-post"><div><strong>${esc(report.reason)}</strong><code>${esc(report.comment.wallet)}</code></div><p>${esc(report.comment.body)}</p><a href="https://solscan.io/token/${esc(report.comment.mint)}" target="_blank" rel="noopener noreferrer">${esc(report.comment.mint)}</a><div><button class="secondary" data-moderate="${esc(report.post)}" data-action="hide">${icon('eye-off')} Hide comment</button><button class="secondary" data-moderate="${esc(report.post)}" data-action="dismiss">${icon('check')} Dismiss reports</button></div></article>`).join('') || '<p class="board-empty">No pending reports.</p>';
+      content.querySelectorAll('[data-moderate]').forEach(button => button.onclick = async () => {
+        button.disabled = true;
+        try {
+          await chain.api(`/moderation/comments/${button.dataset.moderate}`, { method: 'POST', body: JSON.stringify({ action: button.dataset.action }) });
+          await load();
+        } catch (error) { content.querySelector('.form-error').textContent = error.message; }
+        finally { button.disabled = false; }
+      });
+      createIcons({ icons });
+    };
+    const load = async () => {
+      const wallet = chain.publicKey?.toBase58();
+      const reports = await chain.api('/moderation/reports');
+      if (wallet !== chain.publicKey?.toBase58()) return;
+      moderationSnapshot = { wallet, reports };
+      if (content.isConnected) showReports(reports);
+      else if (document.querySelector('.moderation-reports')) navigate('Moderation');
+    };
+    if (moderationSnapshot?.wallet === chain.publicKey?.toBase58()) showReports(moderationSnapshot.reports);
+    content.querySelector('#load-reports').onclick = async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      content.querySelector('.form-error').textContent = '';
+      try { await chain.authenticate(); await load(); }
+      catch (error) { content.querySelector('.form-error').textContent = error.message; }
+      finally { button.disabled = false; }
+    };
+  }
   if (page === 'Explore') content.querySelector('.heading h1').textContent = 'Explore coins';
   if (page === 'Watchlist' && mode === 'live') {
     const button = document.createElement('button');
@@ -152,9 +185,16 @@ function mountLiveDiscussion(coin, { esc, toast }) {
   const root = modal.querySelector('.discussion');
   const errorBox = root.querySelector('.form-error');
   const endpoint = `/community/coins/${encodeURIComponent(coin.mint)}/comments`;
-  const refresh = async () => {
-    const posts = await chain.api(endpoint);
+  const older = document.createElement('button');
+  older.type = 'button'; older.className = 'secondary'; older.textContent = 'Load older comments'; older.hidden = true;
+  root.querySelector('.discussion-posts').after(older);
+  let posts = [], offset = 0;
+  const refresh = async (append = false) => {
+    const next = await chain.api(`${endpoint}?offset=${append ? offset : 0}&limit=50`);
     if (!root.isConnected) return;
+    offset = (append ? offset : 0) + next.length;
+    posts = append ? [...new Map([...posts, ...next].map(post => [post.id, post])).values()] : next;
+    older.hidden = next.length < 50;
     const wallet = chain.publicKey?.toBase58();
     root.querySelector('.discussion-posts').innerHTML = posts.map(post => `<article class="discussion-post"><div><strong title="${esc(post.wallet)}">${esc(post.author)}</strong><time>${esc(new Date(post.created).toLocaleString())}</time>${post.wallet === wallet ? `<button class="icon-button" data-delete="${esc(post.id)}" title="Delete your comment">${icon('trash-2')}</button>` : ''}</div><p>${esc(post.body)}</p><form data-report="${esc(post.id)}"><select name="reason" aria-label="Report reason"><option value="spam">Spam</option><option value="scam">Scam</option><option value="abuse">Abuse</option></select><button class="icon-button" title="Report comment" type="submit">${icon('flag')}</button></form></article>`).join('') || '<p class="board-empty">No comments yet.</p>';
     root.querySelectorAll('[data-delete]').forEach(button => button.onclick = () => change(button, async () => {
@@ -164,8 +204,8 @@ function mountLiveDiscussion(coin, { esc, toast }) {
     root.querySelectorAll('[data-report]').forEach(form => form.onsubmit = event => {
       event.preventDefault();
       change(form.querySelector('button'), async () => {
-        await chain.api(`/community/comments/${form.dataset.report}/report`, { method: 'POST', body: JSON.stringify({ reason: form.elements.reason.value }) });
-        toast('Report recorded. No moderation service is connected.');
+        const result = await chain.api(`/community/comments/${form.dataset.report}/report`, { method: 'POST', body: JSON.stringify({ reason: form.elements.reason.value }) });
+        toast(result.moderationService ? 'Report recorded for moderator review.' : 'Report recorded. Moderators have not been configured.');
       });
     });
     createIcons({ icons });
@@ -176,6 +216,11 @@ function mountLiveDiscussion(coin, { esc, toast }) {
     try { await chain.authenticate(); await action(); }
     catch(error) { if (root.isConnected) errorBox.textContent = error.message; }
     finally { button.disabled = false; }
+  };
+  older.onclick = async () => {
+    older.disabled = true;
+    try { await refresh(true); } catch (error) { errorBox.textContent = error.message; }
+    finally { older.disabled = false; }
   };
   root.querySelector('form').onsubmit = event => {
     event.preventDefault();

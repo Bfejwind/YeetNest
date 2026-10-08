@@ -113,6 +113,8 @@
 .discussion-post strong { font-size: 12px; }
 .discussion-post time { color: var(--muted); font-size: 10px; margin-right: auto; }
 .discussion-post p { color: #d8dee7; font-size: 13px; margin-top: 10px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.moderation-reports { min-width: 0; }
+.moderation-reports code, .moderation-reports a { max-width: 100%; overflow-wrap: anywhere; }
 @media (max-width: 1200px) {
   .terminal-board { grid-template-columns: 1fr; }
   .terminal-column, .terminal-column:first-child, .terminal-column:last-child { padding: 0; border-right: 0; border-bottom: 1px solid var(--line); }

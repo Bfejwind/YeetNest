@@ -11,6 +11,7 @@ import { findWalletProvider, requestWalletConnection } from "./wallet-provider.j
 import bs58 from 'bs58';
 import { pollTransaction, recordTransaction, readTransactions, TransactionOutcomeError } from './transaction-state.js';
 import { validateCurveInstruction } from './transaction-validation.js';
+import { validateLaunchTransaction } from './launch-validation.js';
 import { withTimeout } from './async-timeout.js';
 
 globalThis.Buffer ||= Buffer;
@@ -289,6 +290,12 @@ export async function prepareLaunch({ name, ticker, uri, onProgress = () => {} }
   if (!account?.owner.equals(sdk.LAUNCHPAD_PROGRAM))
     throw new Error("Raydium SOL launch configuration is unavailable.");
   const configInfo = sdk.LaunchpadConfig.decode(account.data);
+  if (!configInfo.mintB.equals(new PublicKey(SOL)) || configInfo.curveType !== 0) throw new Error('Unsupported launch configuration.');
+  const platformId = sdk.LaunchpadPoolInitParam.platformId;
+  const platformAccount = await connection.getAccountInfo(platformId);
+  if (!platformAccount?.owner.equals(sdk.LAUNCHPAD_PROGRAM)) throw new Error('Launch platform ownership could not be verified.');
+  const platform = sdk.PlatformConfig.decode(platformAccount.data);
+  if (platform.restrictCurveParam) throw new Error('This platform requires a custom curve rule that is not supported by standard MemePop launches.');
   onProgress('Building launch transactions...');
   const { transactions, extInfo } = await instance.launchpad.createLaunchpad({
     programId: sdk.LAUNCHPAD_PROGRAM,
@@ -300,6 +307,7 @@ export async function prepareLaunch({ name, ticker, uri, onProgress = () => {} }
     migrateType: "cpmm",
     configId,
     configInfo,
+    platformId,
     mintBDecimals: 9,
     mintBProgram: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
     createOnly: true,
@@ -308,7 +316,31 @@ export async function prepareLaunch({ name, ticker, uri, onProgress = () => {} }
     extraSigners: [mint],
     txVersion: sdk.TxVersion.V0,
   });
+  const pool = extInfo.address;
+  const expectedPool = sdk.getPdaLaunchpadPoolId(sdk.LAUNCHPAD_PROGRAM, mint.publicKey, new PublicKey(SOL)).publicKey;
+  if (!pool.poolId.equals(expectedPool) || pool.mintProgramFlag !== 0 || pool.migrateType !== 1) throw new Error('Launch pool format or migration differs from the supported policy.');
+  const expectedInstruction = sdk.initializeV2(
+    sdk.LAUNCHPAD_PROGRAM, publicKey, publicKey, configId, platformId,
+    sdk.getPdaLaunchpadAuth(sdk.LAUNCHPAD_PROGRAM).publicKey, expectedPool, mint.publicKey, new PublicKey(SOL),
+    sdk.getPdaLaunchpadVaultId(sdk.LAUNCHPAD_PROGRAM, expectedPool, mint.publicKey).publicKey,
+    sdk.getPdaLaunchpadVaultId(sdk.LAUNCHPAD_PROGRAM, expectedPool, new PublicKey(SOL)).publicKey,
+    sdk.getPdaMetadataKey(mint.publicKey).publicKey, new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
+    6, name, ticker, uri,
+    { type: 'ConstantCurve', migrateType: 'cpmm', supply: pool.supply, totalSellA: pool.totalSellA, totalFundRaisingB: pool.totalFundRaisingB },
+    pool.vestingSchedule.totalLockedAmount, pool.vestingSchedule.cliffPeriod, pool.vestingSchedule.unlockPeriod, pool.cpmmCreatorFeeOn,
+  );
+  const optionalAccounts = [sdk.getPdaPlatformAllowConfig(sdk.LAUNCHPAD_PROGRAM, platformId, configId).publicKey.toBase58()];
+  let networkFees = 0n;
   for (const tx of transactions) {
+    const tables = await Promise.all(tx.message.addressTableLookups.map(async lookup => {
+      const { value } = await connection.getAddressLookupTable(lookup.accountKey);
+      if (!value) throw new Error('Launch lookup table is unavailable.');
+      return value;
+    }));
+    validateLaunchTransaction(tx, tx.message.getAccountKeys({ addressLookupTableAccounts: tables }), expectedInstruction, { owner, mint: mint.publicKey.toBase58(), optionalAccounts });
+    const fee = (await connection.getFeeForMessage(tx.message, 'confirmed')).value;
+    if (fee === null || fee > 10000000) throw new Error('Launch network fee is unavailable or exceeds the 0.01 SOL per-transaction cap.');
+    networkFees += BigInt(fee);
     onProgress('Simulating launch transactions...');
     const simulation = await connection.simulateTransaction(tx);
     if (simulation.value.err)
@@ -322,7 +354,16 @@ export async function prepareLaunch({ name, ticker, uri, onProgress = () => {} }
     mint: mint.publicKey.toBase58(),
     poolId: extInfo.address.poolId.toBase58(),
     transactions: transactions.length,
-    supply: "1,000,000,000",
+    supply: fromUnits(pool.supply.toString(), 6),
+    economics: {
+      curveSupply: fromUnits(pool.totalSellA.toString(), 6),
+      fundraisingTarget: fromUnits(pool.totalFundRaisingB.toString(), 9),
+      migrationFee: fromUnits(configInfo.migrateFee.toString(), 9),
+      protocolFeePercent: (Number(configInfo.tradeFeeRate.toString()) / 10000).toString(),
+      platformFeePercent: (Number(platform.feeRate.toString()) / 10000).toString(),
+      creatorFeePercent: (Number(platform.creatorFeeRate.toString()) / 10000).toString(),
+      networkFees: fromUnits(networkFees.toString(), 9),
+    },
     async execute() {
       if (used)
         throw new Error(
@@ -491,11 +532,17 @@ export async function prepareCurveTrade(coin, side, amount, slippageBps = 100) {
     userA: sdk.getATAAddress(publicKey, new PublicKey(coin.mint), common.mintAProgram).publicKey.toBase58(),
     userB: sdk.getATAAddress(publicKey, new PublicKey(SOL), common.mintBProgram).publicKey.toBase58(),
     vaultA: poolInfo.vaultA.toBase58(), vaultB: poolInfo.vaultB.toBase58(),
+    accounts: [owner, sdk.getPdaLaunchpadAuth(sdk.LAUNCHPAD_PROGRAM).publicKey.toBase58(), poolInfo.configId.toBase58(), poolInfo.platformId.toBase58(), coin.poolId,
+      sdk.getATAAddress(publicKey, new PublicKey(coin.mint), common.mintAProgram).publicKey.toBase58(), null,
+      poolInfo.vaultA.toBase58(), poolInfo.vaultB.toBase58(), coin.mint, SOL, common.mintAProgram.toBase58(), common.mintBProgram.toBase58(),
+      sdk.getPdaCpiEvent(sdk.LAUNCHPAD_PROGRAM).publicKey.toBase58(), sdk.LAUNCHPAD_PROGRAM.toBase58(), '11111111111111111111111111111111',
+      sdk.getPdaPlatformVault(sdk.LAUNCHPAD_PROGRAM, poolInfo.platformId, poolInfo.mintB).publicKey.toBase58(),
+      sdk.getPdaCreatorVault(sdk.LAUNCHPAD_PROGRAM, poolInfo.creator, poolInfo.mintB).publicKey.toBase58()],
     maxSystemLamports: ((side === 'Buy' ? BigInt(units.toString()) : 0n) + BigInt(await connection.getMinimumBalanceForRentExemption(165))).toString(),
   });
   const rent = BigInt(await connection.getMinimumBalanceForRentExemption(165));
   const fee = (await connection.getFeeForMessage(built.transaction.message, 'confirmed')).value;
-  if (fee == null) throw new Error('Transaction fee/blockhash is unavailable. Refresh the quote.');
+  if (fee == null || fee > 10000000) throw new Error('Transaction fee/blockhash is unavailable or exceeds the 0.01 SOL fee cap. Refresh the quote.');
   const requiredSol = (side === 'Buy' ? BigInt(units.toString()) : 0n) + rent * 2n + BigInt(fee);
   if (BigInt(await connection.getBalance(publicKey)) < requiredSol) throw new Error('Insufficient SOL for this trade and the reserved account rent/network fee.');
   if (side === 'Sell' && BigInt((await balances()).tokens.find(token => token.mint === coin.mint)?.amount || '0') < BigInt(units.toString())) throw new Error('Insufficient token balance.');
