@@ -10,15 +10,21 @@ import { LaunchpadPool, getPdaLaunchpadPoolId } from '@raydium-io/raydium-sdk-v2
 import { createIndexerQueue } from './indexer-queue.js';
 import { indexerSettings } from './indexer-config.js';
 import { setTimeout as delay } from 'node:timers/promises';
+import { randomUUID } from 'node:crypto';
+import { PUMP_PROGRAM } from './pump-events.js';
+import { indexPumpTransaction } from './pump-indexer.js';
 
 if (!process.env.DATABASE_URL || !process.env.SOLANA_RPC_URL) throw new Error('Indexer requires DATABASE_URL and SOLANA_RPC_URL.');
 const settings = indexerSettings(process.env);
 const shutdown = new AbortController();
 const connection = new Connection(process.env.SOLANA_RPC_URL, { commitment: 'finalized', disableRetryOnRateLimit: true, fetch: (url, options) => fetch(url, { ...options, signal: AbortSignal.any([shutdown.signal, AbortSignal.timeout(25000)]) }) });
-const program = new PublicKey(LAUNCHLAB_PROGRAM);
+const protocol = process.env.INDEXER_PROTOCOL || 'pump';
+if (!['pump', 'raydium'].includes(protocol)) throw new Error('INDEXER_PROTOCOL must be pump or raydium.');
+const checkpoint = protocol === 'pump' ? 'pump-indexer' : 'launchlab-indexer';
+const program = new PublicKey(protocol === 'pump' ? PUMP_PROGRAM : LAUNCHLAB_PROGRAM);
 const records = createAppStore({ databaseUrl: process.env.DATABASE_URL });
 const index = createChainIndexStore(process.env.DATABASE_URL);
-const queue = createIndexerQueue(process.env.DATABASE_URL);
+const queue = createIndexerQueue(process.env.DATABASE_URL, { name: protocol === 'pump' ? 'pump' : 'launchlab' });
 const lock = new pg.Client(databaseConfig(process.env.DATABASE_URL));
 let stopping = false;
 const stop = () => { stopping = true; shutdown.abort(); };
@@ -27,8 +33,9 @@ process.on('SIGINT', stop);
 lock.on('error', stop);
 const pause = ms => delay(ms, undefined, { signal: shutdown.signal }).catch(error => { if (error.name !== 'AbortError') throw error; });
 async function processSignature(row) {
-  const transaction = await connection.getTransaction(row.signature, { maxSupportedTransactionVersion: 0, commitment: 'finalized' });
+  const transaction = await connection.getTransaction(row.signature, { maxSupportedTransactionVersion: 1, commitment: 'finalized' });
   if (!transaction) throw new Error('Finalized transaction not available; cursor retained for retry.');
+  if (protocol === 'pump') return indexPumpTransaction({ transaction, row, connection, index });
   for (const event of decodeLaunchlabEvents(transaction)) {
     if (!['PoolCreateEvent', 'TradeEvent'].includes(event.name)) continue;
     const poolId = new PublicKey(event.data.pool_state);
@@ -48,15 +55,15 @@ try {
   if (settings.role !== 'process') await lock.connect();
   await Promise.all([records.ready(), index.ready(), queue.ready()]);
   if (await connection.getGenesisHash() !== '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d') throw new Error('Indexer requires Solana mainnet.');
-  let state = (await records.get('launchlab-indexer'))[0] || {};
+  let state = (await records.get(checkpoint))[0] || {};
   let leader = false;
   async function scanOnce() {
     if (settings.role === 'process' || stopping) return;
     if (!leader) {
-      const result = await lock.query('SELECT pg_try_advisory_lock(741922) AS acquired');
+      const result = await lock.query('SELECT pg_try_advisory_lock($1) AS acquired', [protocol === 'pump' ? 741924 : 741922]);
       leader = result.rows[0].acquired;
       if (!leader) return;
-      state = (await records.get('launchlab-indexer'))[0] || {};
+      state = (await records.get(checkpoint))[0] || {};
     }
     try {
       const stats = await queue.stats();
@@ -66,10 +73,10 @@ try {
         // Reserve headroom for live scans; suspend historical backfill under pressure.
         if (backfill && stats.pending + stats.processing >= settings.maxJobs / 2) continue;
         state = await scanPage({ connection, program, state, enqueue: queue.enqueue, backfill, limit: settings.pageSize });
-        await records.mutate('launchlab-indexer', entries => { entries.splice(0, entries.length, { ...state, updatedAt: Date.now(), error: null }); });
+        await records.mutate(checkpoint, entries => { entries.splice(0, entries.length, { ...state, updatedAt: Date.now(), error: null }); });
       }
     } catch (error) {
-      await records.mutate('launchlab-indexer', entries => { entries.splice(0, entries.length, { ...state, updatedAt: Date.now(), error: typeof error.code === 'number' ? error.code : 'INDEXER_RETRY' }); }).catch(() => {});
+      await records.mutate(checkpoint, entries => { entries.splice(0, entries.length, { ...state, updatedAt: Date.now(), error: typeof error.code === 'number' ? error.code : 'INDEXER_RETRY' }); }).catch(() => {});
       console.error('Indexer checkpoint retained for retry.', error.name, typeof error.code === 'number' || /^[A-Z0-9_]{1,30}$/.test(String(error.code)) ? error.code : 'NO_CODE');
       if (process.env.INDEXER_ONCE === 'true') process.exitCode = 1;
     }
@@ -95,6 +102,15 @@ try {
     if (settings.role !== 'scan') await Promise.all(Array.from({ length: settings.concurrency }, () => processOne()));
   } else {
     const loops = [];
+    const workerId = randomUUID();
+    loops.push((async () => {
+      let lastPrune = 0;
+      while (!stopping) {
+        await queue.heartbeat(workerId, settings.role);
+        if (Date.now() - lastPrune > 3600000) { await queue.prune(); await index.pruneEvents(); lastPrune = Date.now(); }
+        await pause(30000);
+      }
+    })());
     if (settings.role !== 'process') loops.push((async () => {
       while (!stopping) { await scanOnce(); await pause(settings.scanInterval); }
     })());

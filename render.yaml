@@ -32,6 +32,10 @@ services:
         sync: false
       - key: MODERATOR_WALLETS
         sync: false
+      - key: INDEXER_PROTOCOL
+        value: pump
+      - key: CLOUDFLARE_STREAM_CUSTOMER_CODE
+        sync: false
   - type: worker
     name: yeetnest-launchlab-indexer
     runtime: node
@@ -49,6 +53,8 @@ services:
         sync: false
       - key: INDEXER_ROLE
         value: all
+      - key: INDEXER_PROTOCOL
+        value: pump
       - key: INDEXER_CONCURRENCY
         value: "4"
       - key: INDEXER_PAGE_SIZE

@@ -21,6 +21,40 @@ async function withApi(fetcher, callback, config = {}) {
 }
 const ok = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 
+test('signed follows, account deletion and creator-only stream configuration', async () => {
+  const wallet = Keypair.generate(), other = Keypair.generate(), mint = Keypair.generate().publicKey.toBase58();
+  await withApi(async () => ok({}), async (request, directory) => {
+    const login = async key => {
+      const challenge = await (await request('/auth/challenge', { wallet: key.publicKey.toBase58() })).json();
+      const signature = Buffer.from(nacl.sign.detached(Buffer.from(challenge.message), key.secretKey)).toString('base64');
+      return { Authorization: `Bearer ${(await (await request('/auth/verify', { nonce: challenge.nonce, signature })).json()).token}` };
+    };
+    const a = await login(wallet), b = await login(other), owner = wallet.publicKey.toBase58(), target = other.publicKey.toBase58();
+    const store = createAppStore({ directory });
+    await store.mutate('coins', rows => rows.push({ mint, creator: owner }));
+    const streamUrl = 'https://customer-fixture.cloudflarestream.com/' + 'a'.repeat(32) + '/iframe';
+    assert.equal((await request(`/coins/${mint}/stream`, { streamUrl }, b, 'PUT')).status, 403);
+    assert.equal((await request(`/coins/${mint}/stream`, { streamUrl: 'https://evil.example/iframe' }, a, 'PUT')).status, 400);
+    assert.equal((await request(`/coins/${mint}/stream`, { streamUrl }, a, 'PUT')).status, 200);
+    assert.equal((await request(`/coins/${mint}/stream`, { streamUrl: '' }, a, 'PUT')).status, 200);
+    assert.equal((await request(`/community/following/${target}`, { follow: true }, {}, 'PUT')).status, 401);
+    assert.equal((await request(`/community/following/${owner}`, { follow: true }, a, 'PUT')).status, 400);
+    assert.equal((await request(`/community/following/${target}`, { follow: true }, a, 'PUT')).status, 200);
+    const following = await (await request('/community/following', undefined, a)).json();
+    assert.equal(following.follows[0].following, target);
+    assert.equal((await request('/community/following?limit=101', undefined, a)).status, 400);
+    await request('/community/profile', { name: 'Erase me' }, a);
+    await request('/watchlist', { mints: [mint] }, a, 'PUT');
+    await request(`/community/coins/${mint}/comments`, { body: 'Remove my text' }, a);
+    assert.equal((await request('/community/account/delete', { confirm: target }, a)).status, 400);
+    assert.equal((await request('/community/account/delete', { confirm: owner }, a)).status, 200);
+    assert.deepEqual((await (await request('/community/following', undefined, a)).json()).follows, []);
+    assert.deepEqual(await (await request('/watchlist', undefined, a)).json(), []);
+    assert.deepEqual(await (await request(`/community/coins/${mint}/comments`)).json(), []);
+    assert.notEqual((await (await request(`/community/profiles/${owner}`)).json()).name, 'Erase me');
+  }, { CLOUDFLARE_STREAM_CUSTOMER_CODE: 'fixture' });
+});
+
 test('metadata upload decodes PNG and persists references using a controlled Pinata response', async () => {
   let uploads = 0;
   await withApi(async url => {
@@ -101,6 +135,20 @@ test('shared community uses signed identity, owner deletion and private reports'
   });
 });
 
+test('logout revokes the signed session', async () => {
+  await withApi(async () => ok({}), async request => {
+    const wallet = Keypair.generate();
+    const challenge = await (await request('/auth/challenge', { wallet: wallet.publicKey.toBase58() })).json();
+    const signature = Buffer.from(nacl.sign.detached(Buffer.from(challenge.message), wallet.secretKey)).toString('base64');
+    const { token } = await (await request('/auth/verify', { nonce: challenge.nonce, signature })).json();
+    const headers = { Authorization: `Bearer ${token}` };
+    assert.equal((await request('/watchlist', undefined, headers)).status, 200);
+    assert.equal((await request('/auth/logout', {}, headers)).status, 200);
+    assert.equal((await request('/watchlist', undefined, headers)).status, 401);
+    assert.equal((await request('/auth/logout', {}, headers)).status, 401);
+  });
+});
+
 test('moderation requires an allowlisted signed wallet and retains evidence privately', async () => {
   const moderator = Keypair.generate(), user = Keypair.generate();
   await withApi(async () => ok({}), async request => {
@@ -123,6 +171,14 @@ test('moderation requires an allowlisted signed wallet and retains evidence priv
     assert.equal((await request(`/moderation/comments/${post.id}`, { action: 'hide' }, admin)).status, 200);
     assert.deepEqual(await (await request(endpoint)).json(), []);
     assert.deepEqual(await (await request('/moderation/reports', undefined, admin)).json(), []);
+    assert.equal((await request('/moderation/history')).status, 401);
+    assert.equal((await request('/moderation/history', undefined, a)).status, 403);
+    const history = await (await request('/moderation/history', undefined, admin)).json();
+    assert.equal(history.reports[0].status, 'resolved');
+    assert.equal(history.reports[0].moderated_by, moderator.publicKey.toBase58());
+    assert.equal(history.reports[0].comment.body, 'Reported evidence');
+    assert.equal(history.hasMore, false);
+    assert.equal((await request('/moderation/history?limit=101', undefined, admin)).status, 400);
     assert.equal((await request(endpoint + '?limit=101')).status, 400);
   }, { MODERATOR_WALLETS: moderator.publicKey.toBase58() });
 });

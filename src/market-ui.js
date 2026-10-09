@@ -23,7 +23,7 @@ export function installMarketUI(context) {
   }
   const content = document.querySelector('.content');
   if (page === 'Moderation') {
-    content.innerHTML = `<div class="heading"><h1>Moderation</h1><button class="primary" id="load-reports">${icon('refresh-cw')} Review reports</button></div><p class="form-error" role="alert"></p><div class="moderation-reports"></div>`;
+    content.innerHTML = `<div class="heading"><h1>Moderation</h1><button class="primary" id="load-reports">${icon('refresh-cw')} Review reports</button><button class="secondary" id="load-history">${icon('history')} History</button></div><p class="form-error" role="alert"></p><div class="moderation-reports"></div><div class="moderation-history"></div>`;
     const showReports = reports => {
       content.querySelector('.moderation-reports').innerHTML = reports.map(report => `<article class="discussion-post"><div><strong>${esc(report.reason)}</strong><code>${esc(report.comment.wallet)}</code></div><p>${esc(report.comment.body)}</p><a href="https://solscan.io/token/${esc(report.comment.mint)}" target="_blank" rel="noopener noreferrer">${esc(report.comment.mint)}</a><div><button class="secondary" data-moderate="${esc(report.post)}" data-action="hide">${icon('eye-off')} Hide comment</button><button class="secondary" data-moderate="${esc(report.post)}" data-action="dismiss">${icon('check')} Dismiss reports</button></div></article>`).join('') || '<p class="board-empty">No pending reports.</p>';
       content.querySelectorAll('[data-moderate]').forEach(button => button.onclick = async () => {
@@ -53,6 +53,29 @@ export function installMarketUI(context) {
       catch (error) { content.querySelector('.form-error').textContent = error.message; }
       finally { button.disabled = false; }
     };
+    let historyOffset = 0;
+    const showHistory = async append => {
+      await chain.authenticate();
+      const wallet = chain.publicKey?.toBase58();
+      const result = await chain.api(`/moderation/history?offset=${append ? historyOffset : 0}&limit=50`);
+      if (!content.isConnected || wallet !== chain.publicKey?.toBase58()) return;
+      const root = content.querySelector('.moderation-history');
+      root.querySelector('[data-history-more]')?.remove();
+      if (!append) { root.innerHTML = '<h2>Moderation history</h2>'; historyOffset = 0; }
+      historyOffset += result.reports.length;
+      root.insertAdjacentHTML('beforeend', result.reports.map(report => `<article class="discussion-post"><div><strong>${esc(report.status)}</strong><time>${esc(new Date(Number(report.moderated_at)).toLocaleString())}</time></div><p>${esc(report.reason)}</p><code>${esc(report.moderated_by)}</code><p>${esc(report.comment?.body || '')}</p></article>`).join('') || (!append ? '<p class="board-empty">No resolved reports.</p>' : ''));
+      if (result.hasMore) {
+        root.insertAdjacentHTML('beforeend', '<button class="secondary" data-history-more>Load more</button>');
+        root.querySelector('[data-history-more]').onclick = event => runHistory(event.currentTarget, true);
+      }
+    };
+    const runHistory = async (button, append) => {
+      button.disabled = true;
+      try { await showHistory(append); }
+      catch (error) { if (content.isConnected) content.querySelector('.form-error').textContent = error.message; }
+      finally { button.disabled = false; }
+    };
+    content.querySelector('#load-history').onclick = event => runHistory(event.currentTarget, false);
   }
   if (page === 'Explore') content.querySelector('.heading h1').textContent = 'Explore coins';
   if (page === 'Watchlist' && mode === 'live') {
@@ -136,6 +159,45 @@ export function installMarketUI(context) {
       } catch(error) { form.querySelector('.form-error').textContent = error.message; }
       finally { button.disabled = false; }
     };
+    if (mode === 'live' && address) {
+      content.insertAdjacentHTML('beforeend', `<section class="setup-section"><div class="section-heading"><h2>Following</h2><button class="secondary" id="load-following">${icon('refresh-cw')} Refresh following</button></div><form id="follow-form"><label>Wallet to follow<input name="following" required maxlength="44"/></label><button class="secondary" type="submit">${icon('user-plus')} Follow</button><p class="form-error" role="alert"></p></form><div id="following-list"></div></section><section class="setup-section"><h2>Delete app data</h2><p class="fine">Removes your profile, comments, follows and watchlist. Public blockchain records, coin listings, IPFS media, moderation reports and provider backups are retained.</p><form id="delete-account-form"><label>Confirm your connected wallet address<input name="confirm" required maxlength="44" autocomplete="off"/></label><p class="form-error" role="alert"></p><button class="secondary" type="submit">${icon('trash-2')} Delete app data</button></form></section>`);
+      let followingOffset = 0;
+      const loadFollowing = async append => {
+        await chain.authenticate();
+        const result = await chain.api(`/community/following?offset=${append ? followingOffset : 0}&limit=50`);
+        if (!content.isConnected || chain.publicKey?.toBase58() !== address) return;
+        const root = content.querySelector('#following-list');
+        if (!append) { root.innerHTML = ''; followingOffset = 0; }
+        root.querySelector('[data-more-follows]')?.remove();
+        followingOffset += result.follows.length;
+        root.insertAdjacentHTML('beforeend', result.follows.map(row => `<div class="health-check"><code>${esc(row.following)}</code><button class="icon-button" title="Unfollow wallet" data-unfollow="${esc(row.following)}">${icon('user-minus')}</button></div>`).join('') || (!append ? '<p class="board-empty">Not following any wallets.</p>' : ''));
+        root.querySelectorAll('[data-unfollow]').forEach(button => button.onclick = () => updateFollow(button, button.dataset.unfollow, false));
+        if (result.hasMore) {
+          root.insertAdjacentHTML('beforeend', '<button class="secondary" data-more-follows>Load more</button>');
+          root.querySelector('[data-more-follows]').onclick = async event => {
+            const button = event.currentTarget; button.disabled = true;
+            try { await loadFollowing(true); } catch (error) { toast(error.message); button.disabled = false; }
+          };
+        }
+        createIcons({ icons });
+      };
+      const updateFollow = async (button, following, follow) => {
+        button.disabled = true;
+        try { await chain.authenticate(); await chain.api(`/community/following/${encodeURIComponent(following)}`, { method: 'PUT', body: JSON.stringify({ follow }) }); await loadFollowing(false); }
+        catch (error) { if (content.isConnected) content.querySelector('#follow-form .form-error').textContent = error.message; }
+        finally { button.disabled = false; }
+      };
+      content.querySelector('#follow-form').onsubmit = event => { event.preventDefault(); updateFollow(event.currentTarget.querySelector('button'), new FormData(event.currentTarget).get('following').trim(), true); };
+      content.querySelector('#load-following').onclick = async event => {
+        const button = event.currentTarget; button.disabled = true;
+        try { await loadFollowing(false); } catch (error) { toast(error.message); } finally { button.disabled = false; }
+      };
+      content.querySelector('#delete-account-form').onsubmit = async event => {
+        event.preventDefault(); const form = event.currentTarget, button = form.querySelector('button'); button.disabled = true;
+        try { await chain.authenticate(); await chain.api('/community/account/delete', { method: 'POST', body: JSON.stringify({ confirm: new FormData(form).get('confirm').trim() }) }); await chain.disconnectWallet(); navigate('Profile'); toast('App data deleted. Public records and moderation reports remain.'); }
+        catch (error) { if (form.isConnected) form.querySelector('.form-error').textContent = error.message; button.disabled = false; }
+      };
+    }
   }
   createIcons({ icons });
 }

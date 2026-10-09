@@ -105,6 +105,13 @@
 .profile-form .primary { align-self: flex-start; }
 .profile-wallet { display: flex; flex-direction: column; gap: 10px; padding: 20px 0; border-block: 1px solid var(--line); font-size: 13px; }
 .profile-wallet code { overflow-wrap: anywhere; color: var(--muted); }
+.creator-actions { flex-wrap: wrap; }
+.creator-actions select { min-width: 0; max-width: 100%; }
+.categories { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.moderation-history code, #following-list code { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .creator-actions select { flex-basis: 100%; width: 100%; }
+}
 .discussion { border-top: 1px solid var(--line); margin-top: 28px; }
 .discussion .section-heading h2 { font-size: 18px; }
 .discussion .section-heading { flex-wrap: wrap; }

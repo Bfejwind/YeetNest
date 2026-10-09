@@ -4,7 +4,7 @@ import { pollTransaction, TransactionOutcomeError } from '../src/transaction-sta
 import { minimumOutput, toUnits } from '../src/amounts.js';
 import { validateCurveInstruction } from '../src/transaction-validation.js';
 import { withTimeout } from '../src/async-timeout.js';
-import { Keypair, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { Keypair, PublicKey, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 
 test('operation deadlines resolve, preserve rejection and stop waiting for stalled work', async () => {
   assert.equal(await withTimeout(() => Promise.resolve('ready'), 100, 'Timed out'), 'ready');
@@ -58,4 +58,18 @@ test('curve transaction validator rejects changed side, amounts and destinations
   const funded = withTransfer(accounts[6]);
   validateCurveInstruction(funded, funded.message.getAccountKeys(), { ...expected, maxSystemLamports: '100' });
   assert.throws(() => validateCurveInstruction(funded, funded.message.getAccountKeys(), { ...expected, maxSystemLamports: '99' }));
+  const tokenProgram = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+  const ataProgram = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL');
+  const ata = new TransactionInstruction({ programId: ataProgram, keys: [owner, accounts[5], owner, accounts[9], SystemProgram.programId, tokenProgram].map((pubkey, i) => ({ pubkey, isSigner: i === 0, isWritable: i < 2 })), data: Buffer.from([1]) });
+  const sync = account => new TransactionInstruction({ programId: tokenProgram, keys: [{ pubkey: account, isSigner: false, isWritable: true }], data: Buffer.from([17]) });
+  const auxiliary = instructions => new VersionedTransaction(new TransactionMessage({ payerKey: owner, recentBlockhash: Keypair.generate().publicKey.toBase58(), instructions: [...instructions, curve] }).compileToV0Message());
+  const validAux = auxiliary([ata, sync(accounts[6])]);
+  validateCurveInstruction(validAux, validAux.message.getAccountKeys(), expected);
+  for (const instructions of [[ata, ata], [sync(accounts[5])]]) {
+    const invalid = auxiliary(instructions);
+    assert.throws(() => validateCurveInstruction(invalid, invalid.message.getAccountKeys(), expected));
+  }
+  const redirectedAta = new TransactionInstruction({ ...ata, keys: ata.keys.map((meta, i) => i === 2 ? { ...meta, pubkey: accounts[1] } : meta) });
+  const invalidAta = auxiliary([redirectedAta]);
+  assert.throws(() => validateCurveInstruction(invalidAta, invalidAta.message.getAccountKeys(), expected), /associated token/);
 });

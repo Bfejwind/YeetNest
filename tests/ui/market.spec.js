@@ -25,6 +25,15 @@ test('live community signs in explicitly and uses shared endpoints', async ({ pa
   await page.route('**/api/auth/verify', route => fulfill(route, { token: 'controlled-test-session' }));
   await page.route('**/api/community/profiles/*', route => fulfill(route, { wallet, name: 'Shared Creator', bio: 'Existing profile' }));
   let saved;
+  let follows = [];
+  await page.route('**/api/community/following**', route => {
+    expect(route.request().headers().authorization).toBe('Bearer controlled-test-session');
+    if (route.request().method() === 'PUT') {
+      follows = route.request().postDataJSON().follow ? [{ following: mint }] : [];
+      return fulfill(route, { follow: follows.length > 0 });
+    }
+    return fulfill(route, { follows, hasMore: false });
+  });
   await page.route('**/api/community/profile', route => {
     expect(route.request().headers().authorization).toBe('Bearer controlled-test-session');
     saved = route.request().postDataJSON();
@@ -52,6 +61,14 @@ test('live community signs in explicitly and uses shared endpoints', async ({ pa
   await expect(page.locator('#toast')).toContainText('Profile saved.');
   expect(saved.name).toBe('Updated Creator');
   expect(await page.evaluate(() => window.__communitySignatures)).toBe(1);
+  await page.getByLabel('Wallet to follow').fill(mint);
+  await page.getByRole('button', { name: 'Follow', exact: true }).click();
+  await expect(page.locator('#following-list')).toContainText(mint);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole('button', { name: 'Unfollow wallet' }).click();
+  await expect(page.locator('#following-list')).toContainText('Not following any wallets.');
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByRole('button', { name: 'Explore', exact: true }).click();
   await page.locator('.coin').first().click();
   await page.getByLabel('Comment', { exact: true }).fill('<img src=x onerror=alert(1)>');
@@ -84,6 +101,10 @@ test('moderation explicitly signs in and hides reported comments without renderi
     expect(route.request().postDataJSON().action).toBe('hide');
     reports = []; return route.fulfill({ json: { moderated: true } });
   });
+  await page.route('**/api/moderation/history*', route => {
+    expect(route.request().headers().authorization).toBe('Bearer moderator-session');
+    return route.fulfill({ json: { reports: [{ status: 'resolved', reason: 'spam', moderated_by: wallet, moderated_at: 1700000000000, comment: { body: '<script>retained evidence</script>' } }], hasMore: false } });
+  });
   await page.goto('/');
   await page.locator('[data-mode="live"]').click();
   await page.locator('#wallet').click();
@@ -97,6 +118,9 @@ test('moderation explicitly signs in and hides reported comments without renderi
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole('button', { name: 'Hide comment' }).click();
   await expect(page.locator('.moderation-reports')).toHaveText('No pending reports.');
+  await page.getByRole('button', { name: 'History', exact: true }).click();
+  await expect(page.locator('.moderation-history')).toContainText('<script>retained evidence</script>');
+  await expect(page.locator('.moderation-history script')).toHaveCount(0);
 });
 
 test('market board, leaderboard, profile and local discussion work without pretending shared state', async ({ page }) => {

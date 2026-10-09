@@ -14,6 +14,11 @@ import { PNG } from 'pngjs';
 import { createSecurityStore } from './security-store.js';
 import { createChainIndexStore } from './chain-index-store.js';
 import { createIndexerQueue } from './indexer-queue.js';
+import { createMarketFeed } from './market-feed.js';
+import { createCatalogueStore } from './catalogue-store.js';
+import { decodeCursor, encodeCursor } from './discovery-cursor.js';
+import { createTokenMetadata } from './token-metadata.js';
+import { verifyPumpLaunch, pumpListing, pumpGlobal as fetchPumpGlobal } from './pump-protocol.js';
 
 const address = (value) => {
   try {
@@ -63,24 +68,30 @@ export function createApi({
   app.set('trust proxy', proxyHops);
   const community = createCommunityStore({ databaseUrl: config.DATABASE_URL, directory: storageDir });
   const persisted = createAppStore({ databaseUrl: config.DATABASE_URL, directory: storageDir });
+  const catalogue = createCatalogueStore({ databaseUrl: config.DATABASE_URL, fallback: persisted });
   const security = createSecurityStore(persisted, Date.now, config.DATABASE_URL);
   const chainIndex = createChainIndexStore(config.DATABASE_URL);
-  const indexQueue = config.DATABASE_URL ? createIndexerQueue(config.DATABASE_URL) : null;
+  const marketFeed = chainIndex ? createMarketFeed(chainIndex) : null;
+  app.locals.stopStreams = () => marketFeed?.close();
+  const indexProtocol = config.INDEXER_PROTOCOL || 'pump';
+  if (!['pump', 'raydium'].includes(indexProtocol)) throw new Error('INDEXER_PROTOCOL must be pump or raydium.');
+  const checkpoint = indexProtocol === 'pump' ? 'pump-indexer' : 'launchlab-indexer';
+  const indexQueue = config.DATABASE_URL ? createIndexerQueue(config.DATABASE_URL, { name: indexProtocol === 'pump' ? 'pump' : 'launchlab' }) : null;
   let queueMetricsCache;
   const queueMetrics = async () => {
     if (!indexQueue) return null;
-    if (!queueMetricsCache || queueMetricsCache.expires <= Date.now()) queueMetricsCache = { data: await indexQueue.stats(), expires: Date.now() + 15000 };
+    if (!queueMetricsCache || queueMetricsCache.expires <= Date.now()) queueMetricsCache = { data: { ...await indexQueue.stats(), workers: await indexQueue.workers() }, expires: Date.now() + 15000 };
     return queueMetricsCache.data;
   };
   let lastSecurityPrune = 0;
   app.locals.ready = async () => {
-    await Promise.all([community.ready(), persisted.ready(), security.ready(), chainIndex?.ready(), indexQueue?.ready()]);
+    await Promise.all([community.ready(), persisted.ready(), catalogue.ready(), security.ready(), chainIndex?.ready(), indexQueue?.ready()]);
     if (Date.now() - lastSecurityPrune > 60000) {
       await security.prune();
       lastSecurityPrune = Date.now();
     }
   };
-  app.locals.close = () => Promise.all([community.close(), persisted.close(), security.close(), chainIndex?.close(), indexQueue?.close()]);
+  app.locals.close = () => { marketFeed?.close(); return Promise.all([community.close(), persisted.close(), catalogue.close(), security.close(), chainIndex?.close(), indexQueue?.close()]); };
   const limits = new Map();
   const marketCache = new Map();
   const images = new Map();
@@ -116,9 +127,36 @@ export function createApi({
   );
   const route = (handler) => (req, res, next) =>
     Promise.resolve(handler(req, res)).catch(next);
-  const records = () => persisted.get('coins');
-  const mutate = fn => persisted.mutate('coins', fn);
-  const metadataFor = async (wallet, uri) => (await persisted.get('upload-references')).find(([key]) => key === `${wallet}:${uri}`)?.[1];
+  const records = () => catalogue.list();
+  const metadataFor = (wallet, uri) => catalogue.getUpload(wallet, uri);
+  const tokenMetadata = createTokenMetadata({ fetcher });
+  const installMediaRoutes = () => {
+  app.put('/api/coins/:mint/stream', route(async (req, res) => {
+    const creator = await auth(req), mint = address(req.params.mint);
+    if (await security.rate('stream-rate', creator, 60000) > 5) throw fail('Too many stream changes.', 429);
+    const streamUrl = text(req.body.streamUrl, 300);
+    if (streamUrl) {
+      const code = config.CLOUDFLARE_STREAM_CUSTOMER_CODE;
+      if (!code || !/^[a-z0-9]+$/.test(code)) throw fail('Cloudflare Stream is not configured.', 503);
+      const url = new URL(streamUrl);
+      if (url.protocol !== 'https:' || url.hostname !== `customer-${code}.cloudflarestream.com` || url.port || url.username || url.password || url.search || url.hash || !/^\/[a-f0-9]{32}\/iframe$/.test(url.pathname)) throw fail('Use the configured Cloudflare live input iframe URL.');
+    }
+    res.json(await catalogue.stream(mint, creator, streamUrl));
+    indexed.expires = 0;
+  }));
+  app.get('/api/metadata/:mint/artwork', route(async (req, res) => {
+    const launch = await chainIndex?.getLaunch(address(req.params.mint));
+    if (!launch?.uri) throw fail('Indexed metadata not available.', 404);
+    const metadata = await tokenMetadata(launch.uri);
+    if (!metadata.image) throw fail('Supported artwork not available.', 404);
+    res.redirect(302, `/api/artwork?uri=${encodeURIComponent(metadata.image)}`);
+  }));
+  app.get('/api/metadata/:mint', route(async (req, res) => {
+    const launch = await chainIndex?.getLaunch(address(req.params.mint));
+    if (!launch?.uri) throw fail('Indexed metadata not available.', 404);
+    res.json(await tokenMetadata(launch.uri));
+  }));
+  };
   async function upstream(url, options = {}) {
     let response;
     try {
@@ -212,13 +250,14 @@ export function createApi({
     next();
   });
   app.use("/api", express.json({ limit: "4mb" }));
-  installCommunity(app, { store: community, auth, security, address, text, route, fail, moderators });
-  app.get('/api/watchlist', route(async (req, res) => res.json(await persisted.get(`watchlist:${await auth(req)}`))));
+  installMediaRoutes();
+  installCommunity(app, { store: community, auth, security, address, text, route, fail, moderators, catalogue });
+  app.get('/api/watchlist', route(async (req, res) => res.json(await catalogue.watchlist(await auth(req)))));
   app.put('/api/watchlist', route(async (req, res) => {
     const wallet = await auth(req);
     if (!Array.isArray(req.body.mints) || req.body.mints.length > 200) throw fail('Watchlist must contain at most 200 mints.');
     const mints = [...new Set(req.body.mints.map(address))];
-    await persisted.mutate(`watchlist:${wallet}`, values => { values.splice(0, values.length, ...mints); });
+    await catalogue.setWatchlist(wallet, mints);
     res.json(mints);
   }));
   app.use(
@@ -260,6 +299,11 @@ export function createApi({
       catalogueStorage: persisted.kind,
       community: true,
       moderationService: moderators.length > 0,
+      marketEvents: Boolean(marketFeed),
+      launchProtocol: 'pump',
+      tradingProtocols: ['Pump', 'PumpSwap', 'Raydium LaunchLab (legacy)', 'Jupiter (legacy/market tokens)'],
+      indexProtocol,
+      streamPlayback: Boolean(config.CLOUDFLARE_STREAM_CUSTOMER_CODE),
     }),
   );
   app.post(
@@ -383,6 +427,12 @@ export function createApi({
       res.json({ nonce, message });
     }),
   );
+  app.post('/api/auth/logout', route(async (req, res) => {
+    await auth(req);
+    const token = req.headers.authorization.replace(/^Bearer /, '');
+    await security.take('session', token);
+    res.json({ revoked: true });
+  }));
   app.post(
     "/api/auth/verify",
     route(async (req, res) => {
@@ -475,12 +525,7 @@ export function createApi({
         socials,
         expires: Date.now() + 31536000000,
       };
-      await persisted.mutate('upload-references', entries => {
-        const key = `${wallet}:${uri}`;
-        const prior = entries.findIndex(([id]) => id === key);
-        if (prior >= 0) entries[prior] = [key, reference];
-        else entries.push([key, reference]);
-      });
+      await catalogue.upload(reference);
       res.json({ uri, image });
     }),
   );
@@ -497,6 +542,9 @@ export function createApi({
       const { LaunchpadPool, LAUNCHPAD_PROGRAM, getPdaLaunchpadPoolId } =
         await import("@raydium-io/raydium-sdk-v2");
       const account = await connection.getAccountInfo(new PublicKey(poolId));
+      const pumpLaunch = req.body.protocol === 'pump';
+      if (pumpLaunch) await verifyPumpLaunch(connection, { mint, poolId, creator }, account);
+      else {
       if (!account?.owner.equals(LAUNCHPAD_PROGRAM))
         throw fail("Raydium pool is not confirmed yet. Retry registration.");
       const pool = LaunchpadPool.decode(account.data);
@@ -511,6 +559,7 @@ export function createApi({
         !pool.mintA.equals(new PublicKey(mint))
       )
         throw fail("This wallet does not own the launch.", 403);
+      }
       const coin = {
         id: mint,
         mint,
@@ -524,12 +573,12 @@ export function createApi({
         uri: req.body.uri,
         pair: "SOL",
         created: Date.now(),
-        source: "Raydium LaunchLab",
+        source: pumpLaunch ? 'Pump/PumpSwap' : 'Raydium LaunchLab',
+        protocol: pumpLaunch ? 'pump' : 'raydium',
         decimals: 6,
       };
-      await mutate((coins) => {
-        if (!coins.some((c) => c.mint === mint)) coins.unshift(coin);
-      });
+      await catalogue.insert(coin);
+      indexed.expires = 0;
       res.json(coin);
     }),
   );
@@ -541,13 +590,8 @@ export function createApi({
         metadata = await metadataFor(creator, req.body.uri);
       if (!metadata || metadata.wallet !== creator)
         throw fail("Upload the new artwork with your creator wallet first.");
-      const result = await mutate((coins) => {
-        const coin = coins.find((c) => c.mint === mint);
-        if (!coin || coin.creator !== creator)
-          throw fail("Only the launch creator can change this image.", 403);
-        coin.image = metadata.image;
-        return coin;
-      });
+      const result = await catalogue.image(mint, creator, metadata.image);
+      indexed.expires = 0;
       res.json(result);
     }),
   );
@@ -618,10 +662,14 @@ export function createApi({
     res.json({ trades: (data.data || []).slice(0, 20).map(row => row.attributes), source: 'GeckoTerminal', updatedAt: Date.now() });
   }));
   let indexed = { coins: [], expires: 0 };
+  app.get('/api/market/events', route(async (req, res) => {
+    if (!marketFeed) return res.status(503).json({ error: 'Indexed market stream requires PostgreSQL.' });
+    await marketFeed.attach(req, res);
+  }));
   app.get('/api/indexer/status', route(async (req, res) => {
-    const state = (await persisted.get('launchlab-indexer'))[0];
+    const state = (await persisted.get(checkpoint))[0];
     const jobs = await queueMetrics();
-    res.json({ enabled: Boolean(indexQueue), scannedAt: state?.updatedAt || null, scanError: state?.error || null, scanBackfillComplete: Boolean(state?.backfillComplete), jobs, historyComplete: Boolean(state?.backfillComplete && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
+    res.json({ enabled: Boolean(indexQueue), historyScope: indexProtocol, scannedAt: state?.updatedAt || null, scanError: state?.error || null, scanBackfillComplete: Boolean(state?.backfillComplete), jobs, historyComplete: Boolean(state?.backfillComplete && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
   }));
   app.get('/api/launches/indexed', route(async (req, res) => {
     const offset = Number(req.query.offset || 0), limit = Number(req.query.limit || 24);
@@ -629,11 +677,25 @@ export function createApi({
     const query = text(req.query.query || '', 100);
     if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100 || (status !== undefined && ![0, 1, 2].includes(status))) throw fail('Invalid indexed discovery page.');
     if (!chainIndex) return res.json({ coins: [], available: false, reason: 'PostgreSQL chain index is not enabled.' });
-    const rows = await chainIndex.list({ query, status, offset, limit });
-    const registered = new Map((await records()).map(coin => [coin.mint, coin]));
-    const state = (await persisted.get('launchlab-indexer'))[0];
+    const after = decodeCursor(req.query.cursor, query, status);
+    const rows = await chainIndex.list({ query, status, offset, limit: limit + 1, after });
+    const hasMore = rows.length > limit;
+    rows.splice(limit);
+    const nextCursor = hasMore ? encodeCursor(rows.at(-1), query, status) : null;
+    const registered = new Map((await catalogue.find(rows.map(row => row.mint))).map(coin => [coin.mint, coin]));
+    const state = (await persisted.get(checkpoint))[0];
     const jobs = await queueMetrics();
-    res.json({ coins: rows.map(row => ({ ...registered.get(row.mint), id: row.mint, mint: row.mint, poolId: row.pool, creator: row.creator, name: registered.get(row.mint)?.name || row.name || `${row.mint.slice(0, 4)}...${row.mint.slice(-4)}`, ticker: registered.get(row.mint)?.ticker || row.ticker || 'TOKEN', decimals: row.decimals, pair: 'SOL', uri: row.uri, source: registered.has(row.mint) ? 'MemePop' : 'External LaunchLab', launchStatus: ['Trading', 'Migrating', 'Graduated'][row.status], progress: Number(row.target) > 0 ? Math.min(100, Number(row.raised) / Number(row.target) * 100) : 0, raised: row.raised, target: row.target, supplyRaw: row.supply, created: row.created === null ? null : Number(row.created), updatedAt: Number(row.updated), slot: Number(row.slot) })), available: true, hasMore: rows.length === limit, offset, indexedAt: state?.updatedAt || null, indexerError: jobs?.failed ? 'INDEXING_JOBS_FAILED' : state?.error || null, jobs, historyComplete: Boolean(state?.backfillComplete && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
+    res.json({ coins: rows.map(row => ({
+      ...registered.get(row.mint), id: row.mint, mint: row.mint, poolId: row.pool, protocol: row.protocol, creator: row.creator,
+      name: registered.get(row.mint)?.name || row.name || `${row.mint.slice(0, 4)}...${row.mint.slice(-4)}`,
+      ticker: registered.get(row.mint)?.ticker || row.ticker || 'TOKEN', decimals: row.decimals, pair: 'SOL', uri: row.uri,
+      source: registered.has(row.mint) ? 'MemePop' : row.protocol === 'pump' ? 'External Pump' : 'External LaunchLab',
+      launchStatus: ['Trading', 'Migrating', 'Graduated'][row.status],
+      progress: row.progress !== null ? Number(row.progress) : Number(row.target) > 0 ? Math.min(100, Number(row.raised) / Number(row.target) * 100) : 0,
+      raised: row.raised, target: row.target, supplyRaw: row.supply, created: row.created === null ? null : Number(row.created), updatedAt: Number(row.updated), slot: Number(row.slot),
+    })), available: true, hasMore, nextCursor, offset, indexProtocol, indexedAt: state?.updatedAt || null,
+      indexerError: jobs?.failed ? 'INDEXING_JOBS_FAILED' : state?.error || null, jobs,
+      historyScope: indexProtocol, historyComplete: Boolean(state?.backfillComplete && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
   }));
   app.get('/api/curve/:mint', route(async (req, res) => {
     const mint = address(req.params.mint);
@@ -644,19 +706,24 @@ export function createApi({
   app.get(
     "/api/launches",
     route(async (req, res) => {
-      const coins = await records();
-      if (!coins.length) return res.json([]);
       const offset = Number(req.query.offset || 0), limit = Number(req.query.limit || 100);
       if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw fail('Invalid discovery page.');
+      const coins = await catalogue.list({ offset, limit });
+      if (!coins.length) return res.json([]);
       const key = `${offset}:${limit}:${coins.length}`;
       if (indexed.expires > Date.now() && indexed.key === key)
         return res.json(indexed.coins);
-      const selected = coins.slice(offset, offset + limit);
+      const selected = coins;
       const sdk = await import("@raydium-io/raydium-sdk-v2");
       const accounts = await connection.getMultipleAccountsInfo(
         selected.map((c) => new PublicKey(c.poolId)),
       );
-      const updated = selected.map((coin, i) => {
+      let pumpGlobal;
+      if (selected.some(coin => coin.protocol === 'pump')) {
+        pumpGlobal = await fetchPumpGlobal(connection);
+      }
+      const updated = await Promise.all(selected.map(async (coin, i) => {
+        if (coin.protocol === 'pump') return pumpListing(coin, accounts[i], pumpGlobal);
         if (!accounts[i]?.owner.equals(sdk.LAUNCHPAD_PROGRAM)) return coin;
         const pool = sdk.LaunchpadPool.decode(accounts[i].data);
         const target = Number(pool.totalFundRaisingB.toString());
@@ -673,7 +740,7 @@ export function createApi({
           target: pool.totalFundRaisingB.toString(),
           updatedAt: Date.now(),
         };
-      });
+      }));
       indexed = { key, coins: updated, expires: Date.now() + 30000 };
       res.json(updated);
     }),

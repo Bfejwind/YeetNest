@@ -12,6 +12,8 @@ import bs58 from 'bs58';
 import { pollTransaction, recordTransaction, readTransactions, TransactionOutcomeError } from './transaction-state.js';
 import { validateCurveInstruction } from './transaction-validation.js';
 import { validateLaunchTransaction } from './launch-validation.js';
+import { purchaseStore, reviewablePurchase } from './launch-purchases.js';
+import { validateCreatorClaim } from './claim-validation.js';
 import { withTimeout } from './async-timeout.js';
 
 globalThis.Buffer ||= Buffer;
@@ -83,9 +85,11 @@ export async function connectWallet(name) {
 export async function disconnectWallet() {
   connectionAttempt++;
   const old = provider;
+  const oldSession = session;
   provider = null;
   publicKey = null;
   session = null;
+  if (oldSession) await fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${oldSession}` }, signal: AbortSignal.timeout(5000) }).catch(() => {});
   try { await old?.disconnect?.(); }
   finally { old?.destroy?.(); }
 }
@@ -149,7 +153,7 @@ async function assertMainnet() {
     throw new Error("The configured RPC is not Solana mainnet.");
 }
 
-export async function submitAndConfirm(transaction, context = {}) {
+export async function submitAndConfirm(transaction, context = {}, onSubmitted = () => {}) {
   await withTimeout(() => assertMainnet(), 30000, 'Mainnet RPC check timed out before signing. Check the RPC connection; no transaction was submitted by this request.');
   const owner = publicKey.toBase58();
   const signer = provider;
@@ -161,6 +165,7 @@ export async function submitAndConfirm(transaction, context = {}) {
   const signature = bs58.encode(signed.signatures[0]);
   const existing = readTransactions().find(row => row.signature === signature);
   if (existing) throw new TransactionOutcomeError(signature, existing.state, 'This signed transaction was already attempted.');
+  onSubmitted(signature);
   recordTransaction({ ...context, signature, wallet: owner, state: 'submitted', network: 'mainnet-beta' });
   try {
     const returned = await withTimeout(() => connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 }), 30000, 'RPC broadcast timed out.');
@@ -272,7 +277,17 @@ async function raydium() {
   return { sdk, instance };
 }
 
-export async function prepareLaunch({ name, ticker, uri, onProgress = () => {} }) {
+const pumpContext = () => ({ connection, wallet: () => publicKey, submit: submitAndConfirm });
+const isPump = coin => coin.protocol === 'pump' || coin.source === 'Pump' || coin.source === 'Pump/PumpSwap';
+
+export async function prepareLaunch(parameters) {
+  parameters.onProgress?.('Checking Solana mainnet...');
+  await assertMainnet();
+  const { preparePumpLaunch } = await import('./pump-chain.js');
+  return preparePumpLaunch(pumpContext(), parameters);
+}
+
+export async function prepareRaydiumLaunch({ name, ticker, uri, onProgress = () => {} }) {
   onProgress('Checking Solana mainnet...');
   await assertMainnet();
   const owner = publicKey.toBase58();
@@ -382,7 +397,12 @@ export async function prepareLaunch({ name, ticker, uri, onProgress = () => {} }
   };
 }
 
-export async function creatorFeeBalance() {
+export async function creatorFeeBalance(protocol = 'pump') {
+  if (protocol === 'pump') {
+    await assertMainnet();
+    const { pumpCreatorFeeBalance } = await import('./pump-chain.js');
+    return pumpCreatorFeeBalance(pumpContext());
+  }
   if (!publicKey) throw new Error("Connect your creator wallet.");
   const sdk = await import("@raydium-io/raydium-sdk-v2");
   const vault = sdk.getPdaCreatorVault(
@@ -399,10 +419,15 @@ export async function creatorFeeBalance() {
   };
 }
 
-export async function prepareCreatorClaim() {
+export async function prepareCreatorClaim(protocol = 'pump') {
+  if (protocol === 'pump') {
+    await assertMainnet();
+    const { preparePumpCreatorClaim } = await import('./pump-chain.js');
+    return preparePumpCreatorClaim(pumpContext());
+  }
   await assertMainnet();
   const owner = publicKey.toBase58();
-  const balance = await creatorFeeBalance();
+  const balance = await creatorFeeBalance('raydium');
   if (Number(balance.amount) <= 0)
     throw new Error("No SOL-paired creator fees are available to claim.");
   const { sdk, instance } = await raydium();
@@ -411,6 +436,21 @@ export async function prepareCreatorClaim() {
     mintB: new PublicKey(SOL),
     txVersion: sdk.TxVersion.V0,
   });
+  const tables = await Promise.all(built.transaction.message.addressTableLookups.map(async lookup => {
+    const { value } = await connection.getAddressLookupTable(lookup.accountKey);
+    if (!value) throw new Error('Claim lookup table is unavailable.');
+    return value;
+  }));
+  const tokenProgram = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA');
+  const recipient = sdk.getATAAddress(publicKey, new PublicKey(SOL), tokenProgram).publicKey.toBase58();
+  validateCreatorClaim(built.transaction, built.transaction.message.getAccountKeys({ addressLookupTableAccounts: tables }), {
+    owner, program: sdk.LAUNCHPAD_PROGRAM.toBase58(), recipient,
+    accounts: [owner, sdk.getPdaCreatorFeeVaultAuth(sdk.LAUNCHPAD_PROGRAM).publicKey.toBase58(),
+      sdk.getPdaCreatorVault(sdk.LAUNCHPAD_PROGRAM, publicKey, new PublicKey(SOL)).publicKey.toBase58(), recipient, SOL, tokenProgram.toBase58(),
+      '11111111111111111111111111111111', 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL'],
+  });
+  const networkFee = (await connection.getFeeForMessage(built.transaction.message, 'confirmed')).value;
+  if (networkFee == null || networkFee > 10000000) throw new Error('Claim network fee is unavailable or exceeds 0.01 SOL.');
   const simulation = await connection.simulateTransaction(built.transaction);
   if (simulation.value.err)
     throw new Error(
@@ -420,13 +460,14 @@ export async function prepareCreatorClaim() {
   let used = false;
   return {
     ...balance,
+    networkFee: fromUnits(String(networkFee), 9),
     async execute() {
       if (used || Date.now() > expires)
         throw new Error("Claim preparation expired or was already submitted.");
       if (publicKey?.toBase58() !== owner)
         throw new Error("Wallet changed. Prepare the claim again.");
       used = true;
-      return submitAndConfirm(built.transaction);
+      return submitAndConfirm(built.transaction, { operation: 'creator-claim' });
     },
   };
 }
@@ -441,6 +482,10 @@ export async function walletActivity() {
 }
 
 export async function launchState(coin) {
+  if (isPump(coin)) {
+    const { pumpLaunchState } = await import('./pump-chain.js');
+    return pumpLaunchState(connection, coin);
+  }
   const sdk = await import("@raydium-io/raydium-sdk-v2");
   const account = await connection.getAccountInfo(new PublicKey(coin.poolId));
   if (!account?.owner.equals(sdk.LAUNCHPAD_PROGRAM))
@@ -461,13 +506,18 @@ export async function launchState(coin) {
   };
 }
 
-export async function prepareCurveTrade(coin, side, amount, slippageBps = 100) {
+export async function prepareCurveTrade(coin, side, amount, slippageBps = 100, executionContext = {}) {
   await assertMainnet();
+  if (isPump(coin)) {
+    const { preparePumpTrade } = await import('./pump-chain.js');
+    return preparePumpTrade(pumpContext(), coin, side, amount, slippageBps, executionContext);
+  }
   const owner = publicKey.toBase58();
   const { sdk, instance } = await raydium();
   const poolInfo = await instance.launchpad.getRpcPoolInfo({
     poolId: new PublicKey(coin.poolId),
   });
+  if (poolInfo.mintProgramFlag !== 0) throw new Error('Only classic SPL/SOL pools are supported by curve trading.');
   if (Number(poolInfo.status) === 1) throw new Error('Pool is migrating. Trading resumes after graduation completes.');
   if (Number(poolInfo.status) === 2) return prepareSwap(coin, side, amount, slippageBps);
   if (Number(poolInfo.status) !== 0) throw new Error('Unsupported pool status.');
@@ -563,7 +613,76 @@ export async function prepareCurveTrade(coin, side, amount, slippageBps = 100) {
       if (!publicKey || publicKey.toBase58() !== owner)
         throw new Error("Wallet changed. Request a new quote.");
       used = true;
-      return submitAndConfirm(built.transaction);
+      return submitAndConfirm(built.transaction, executionContext.record || {}, executionContext.onSubmitted);
     },
   };
+}
+
+export function pendingLaunchPurchases() {
+  return purchaseStore().read().filter(row => row.wallet === publicKey?.toBase58() && !['confirmed', 'cancelled'].includes(row.state));
+}
+
+export function saveLaunchPurchase(entry) { return purchaseStore().save(entry); }
+
+export async function cancelLaunchPurchase(intent) {
+  if (intent.wallet !== publicKey?.toBase58()) throw new Error('Connect the original creator wallet.');
+  const store = purchaseStore();
+  const current = store.read().find(row => row.wallet === intent.wallet && row.mint === intent.mint);
+  if (!current) throw new Error('Initial purchase is unavailable.');
+  const checked = await reviewablePurchase(current, connection);
+  if (checked.state === 'confirmed') { store.save(checked); throw new Error('Initial purchase was already confirmed.'); }
+  store.save({ ...checked, state: 'cancelled' });
+}
+
+export async function prepareLaunchPurchase(intent) {
+  await assertMainnet();
+  if (intent.wallet !== publicKey.toBase58()) throw new Error('Connect the original creator wallet.');
+  const store = purchaseStore();
+  const current = store.read().find(row => row.wallet === intent.wallet && row.mint === intent.mint);
+  if (!current || current.state === 'cancelled') throw new Error('Initial purchase was cancelled or is unavailable.');
+  if (current.state === 'signing') throw new Error('Initial purchase signing is unresolved. Close the wallet prompt and check wallet activity before continuing.');
+  const checked = await reviewablePurchase(current, connection);
+  store.save(checked);
+  if (checked.state === 'confirmed') throw new Error('Initial purchase is already confirmed.');
+  if (isPump(current)) {
+    const state = await launchState(current);
+    if (!state.pool.creator.equals(publicKey) || state.pool.complete) throw new Error('Confirmed Pump creator curve is not available for its initial buy.');
+  } else {
+    const { sdk, instance } = await raydium();
+    const account = await connection.getAccountInfo(new PublicKey(current.poolId), 'confirmed');
+    if (!account?.owner.equals(sdk.LAUNCHPAD_PROGRAM)) throw new Error('Coin creation is not confirmed yet. Recheck it before buying.');
+    const pool = await instance.launchpad.getRpcPoolInfo({ poolId: new PublicKey(current.poolId) });
+    if (!pool.creator.equals(publicKey) || !pool.mintA.equals(new PublicKey(current.mint)) || pool.status !== 0
+      || !sdk.getPdaLaunchpadPoolId(sdk.LAUNCHPAD_PROGRAM, pool.mintA, pool.mintB).publicKey.equals(new PublicKey(current.poolId))) throw new Error('Confirmed creator pool is not available for its initial curve buy.');
+  }
+  let attempt;
+  const quote = await prepareCurveTrade({ mint: current.mint, poolId: current.poolId, protocol: current.protocol, decimals: 6, ticker: current.ticker }, 'Buy', current.amount, current.slippageBps, {
+    record: { operation: 'initial-buy', mint: current.mint, poolId: current.poolId },
+    onSubmitted: signature => {
+      const latest = store.read().find(row => row.wallet === current.wallet && row.mint === current.mint);
+      if (latest?.state !== 'signing' || latest.attempt !== attempt) throw new Error('Initial purchase was cancelled or changed before broadcast.');
+      store.save({ ...current, signature, state: 'submitted', attempt });
+    },
+  });
+  let used = false;
+  return { ...quote, async execute() {
+    if (used) throw new Error('Initial purchase quote was already used.');
+    const latest = store.read().find(row => row.wallet === current.wallet && row.mint === current.mint);
+    if (['cancelled', 'signing', 'submitted', 'unknown', 'confirmed'].includes(latest?.state) || (latest?.signature && latest.signature !== current.signature)) throw new Error('Initial purchase changed. Recheck its status.');
+    used = true;
+    attempt = crypto.randomUUID();
+    store.save({ ...current, state: 'signing', attempt });
+    try {
+      const signature = await quote.execute();
+      store.save({ ...current, signature, state: 'confirmed' });
+      return signature;
+    } catch (error) {
+      if (error.signature) store.save({ ...current, signature: error.signature, state: error.state || 'unknown' });
+      else {
+        const latest = store.read().find(row => row.wallet === current.wallet && row.mint === current.mint);
+        if (latest?.state === 'signing' && latest.attempt === attempt) store.save({ ...current, state: 'ready' });
+      }
+      throw error;
+    }
+  } };
 }

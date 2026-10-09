@@ -71,6 +71,13 @@ export function installLaunchpadUI(context) {
   }
   if (page === "Creator Studio") {
     creatorStudio(context);
+    if (mode === 'live' && chain.publicKey) {
+      const purchases = chain.pendingLaunchPurchases();
+      if (purchases.length) {
+        document.querySelector('.content').insertAdjacentHTML('beforeend', `<section class="setup-section"><div class="section-heading"><h2>Initial purchases</h2></div>${purchases.map((intent, index) => `<div class="health-check"><div><strong>${esc(intent.ticker)}</strong><span>${esc(intent.amount)} SOL · ${esc(intent.state)}</span></div><button class="secondary" data-resume-purchase="${index}">${icon('refresh-cw')} Review purchase</button></div>`).join('')}</section>`);
+        document.querySelectorAll('[data-resume-purchase]').forEach(button => button.onclick = () => reviewInitialPurchase(purchases[Number(button.dataset.resumePurchase)], context));
+      }
+    }
     let pending;
     try { pending = JSON.parse(localStorage.getItem('yn-pending-registration') || 'null'); } catch { pending = null; }
     if (mode === 'live' && pending?.wallet === chain.publicKey?.toBase58()) {
@@ -111,6 +118,42 @@ export function installLaunchpadUI(context) {
       loadActivity(context);
   }
   createIcons({ icons });
+}
+
+export function reviewInitialPurchase(intent, { modal, esc, toast, transactionResult }) {
+  modal(`<span class="eyebrow">INITIAL PURCHASE / SEPARATE TRANSACTION</span><h2>Buy your new coin</h2><p class="address">${esc(intent.mint)}</p><div class="launch-terms"><span>Amount <b>${esc(intent.amount)} SOL</b></span><span>Slippage <b>${intent.slippageBps / 100}%</b></span></div><div id="initial-quote"></div><p class="form-error" role="alert"></p><button class="primary full" id="review-initial">${icon('refresh-cw')} Get initial buy quote</button><button class="secondary full" id="cancel-initial">Skip initial purchase</button>`, () => {
+    const button = document.querySelector('#review-initial');
+    const root = button.closest('.modal');
+    root.querySelector('#cancel-initial').onclick = async event => {
+      const cancel = event.currentTarget; cancel.disabled = true;
+      try { await chain.cancelLaunchPurchase(intent); root.querySelector('.form-error').textContent = 'Initial purchase cancelled. Your coin is unchanged.'; button.disabled = true; }
+      catch (error) { root.querySelector('.form-error').textContent = error.message; cancel.disabled = false; }
+    };
+    button.onclick = async () => {
+      button.disabled = true;
+      root.querySelector('.form-error').textContent = '';
+      try {
+        const quote = await chain.prepareLaunchPurchase(intent);
+        if (!root.isConnected) return;
+        root.querySelector('#initial-quote').innerHTML = `<div class="launch-terms">${quote.inputIsMaximum ? `<span>Maximum SOL input <b>${esc(intent.amount)} SOL</b></span>` : ''}<span>${quote.inputIsMaximum ? 'Target tokens' : 'Estimated tokens'} <b>${esc(quote.output)}</b></span><span>Minimum tokens <b>${esc(quote.minimum)}</b></span>${quote.feeDetails.map(([name, amount]) => `<span>${esc(name)} <b>${esc(amount)} SOL</b></span>`).join('')}</div>`;
+        button.disabled = false;
+        button.textContent = 'Sign initial buy';
+        button.onclick = async () => {
+          button.disabled = true;
+          try {
+            const signature = await quote.execute();
+            transactionResult('Initial purchase confirmed.', signature, intent.mint);
+          } catch (error) {
+            if (root.isConnected) { root.querySelector('.form-error').textContent = `${error.message} Your coin remains created. Recheck this purchase in Creator Studio.`; button.textContent = 'Recheck in Creator Studio'; }
+          }
+        };
+      } catch (error) {
+        if (root.isConnected) root.querySelector('.form-error').textContent = error.message;
+        button.disabled = false;
+      }
+    };
+    createIcons({ icons });
+  });
 }
 
 async function setupForm({ esc, toast, reload }) {
@@ -183,10 +226,16 @@ function creatorStudio(context) {
   const content = document.querySelector(".content");
   content.innerHTML = `<div class="heading"><div><div class="eyebrow">CREATOR STUDIO / ${mode.toUpperCase()}</div><h1>Make some noise.</h1><p>Your launches. Your artwork. Your creator fees.</p></div><button class="primary" id="studio-launch">${icon("plus")} Hatch a coin</button></div><section class="creator-banner"><div><span class="label">RAYDIUM CREATOR FEES</span><h2 id="creator-fee">${mode === "live" ? "--" : "Demo mode"}</h2><p>SOL-paired launch fees are claimed in wrapped SOL.</p></div><div class="creator-actions"><button class="secondary" id="refresh-fees">${icon("refresh-cw")} Refresh</button><button class="primary" id="claim-fees">${icon("gift")} ${chain.publicKey && mode === "live" ? "Claim fees" : "Connect live wallet"}</button></div></section><div class="section-heading"><h2>Your launches <span class="count-badge">${mine.length}</span></h2></div><div class="studio-coins">${mine.map((c) => `<button class="studio-coin" data-studio-coin="${esc(c.id)}"><div><b>${esc(c.name)}</b><span>$${esc(c.ticker)} · ${esc(c.launchStatus || (mode === "demo" ? "Demo" : "LaunchLab"))}</span></div>${icon("arrow-up-right")}</button>`).join("") || `<div class="empty">${icon("egg")}<h3>Your next idea starts here.</h3><p>${mode === "live" && !chain.publicKey ? "Connect your creator wallet to see your launches." : "Your created coins will appear here."}</p></div>`}</div>`;
   document.querySelector("#studio-launch").onclick = launch;
+  const feeProtocol = document.createElement('select');
+  feeProtocol.title = 'Creator fee protocol';
+  feeProtocol.innerHTML = '<option value="pump">Pump / PumpSwap</option><option value="raydium">Raydium LaunchLab (legacy)</option>';
+  document.querySelector('.creator-actions').prepend(feeProtocol);
+  document.querySelector('.creator-banner .label').textContent = 'CREATOR FEES';
+  document.querySelector('.creator-banner p').textContent = 'Collected SOL fees. Unswept Pump curve/pool fee buckets are not included.';
   const loadFees = async () => {
     if (mode !== "live" || !chain.publicKey) return;
     try {
-      const balance = await chain.creatorFeeBalance();
+      const balance = await chain.creatorFeeBalance(feeProtocol.value);
       if (document.querySelector("#creator-fee"))
         document.querySelector("#creator-fee").textContent =
           `${balance.amount} ${balance.symbol}`;
@@ -195,6 +244,11 @@ function creatorStudio(context) {
     }
   };
   document.querySelector("#refresh-fees").onclick = loadFees;
+  feeProtocol.onchange = () => {
+    document.querySelector('#creator-fee').textContent = '--';
+    document.querySelector('.creator-banner p').textContent = feeProtocol.value === 'pump' ? 'Collected SOL fees. Unswept Pump curve/pool fee buckets are not included.' : 'Legacy LaunchLab SOL-paired fees are claimed in wrapped SOL.';
+    loadFees();
+  };
   document
     .querySelectorAll("[data-studio-coin]")
     .forEach((b) => (b.onclick = () => openCoin(b.dataset.studioCoin)));
@@ -210,10 +264,15 @@ function creatorStudio(context) {
     const button = event.currentTarget;
     button.disabled = true;
     try {
-      const prepared = await chain.prepareCreatorClaim();
+      const prepared = await chain.prepareCreatorClaim(feeProtocol.value);
       modal(
         `<span class="eyebrow">RAYDIUM / MAINNET</span><h2>Claim your creator fees.</h2><div class="claim-amount">${esc(prepared.amount)} <span>WSOL</span></div><p class="fine">Claims your SOL-paired LaunchLab creator fees. Wrapped SOL is deposited into your wallet’s token account. Network fees apply.</p><p class="form-error" id="claim-error"></p><button class="primary full" id="sign-claim">${icon("pen-line")} Sign and claim</button>`,
         () => {
+          if (prepared.protocol === 'pump') {
+            document.querySelector('.modal > .eyebrow').textContent = 'PUMP / PUMPSWAP';
+            document.querySelector('.claim-amount span').textContent = 'SOL/WSOL';
+            document.querySelector('.modal > .fine').textContent = 'Pump fees arrive as SOL; PumpSwap fees arrive as WSOL in your wallet token account, which is not closed. Unswept buckets are excluded. Review recipients and network fees in your wallet.';
+          }
           document.querySelector("#sign-claim").onclick = async (e) => {
             const b = e.currentTarget;
             b.disabled = true;
@@ -268,12 +327,20 @@ export async function mountMarket(coin, { esc }) {
   disposeChart();
   const root = document.querySelector("#live-market");
   if (!root) return;
+  let cancelled = false, refreshTimer;
+  const changed = event => {
+    if (!root.isConnected || document.hidden || (event.detail.mint && event.detail.mint !== coin.mint) || refreshTimer) return;
+    refreshTimer = setTimeout(() => { if (root.isConnected) mountMarket(coin, { esc }); }, 5000);
+  };
+  window.addEventListener('memepop-market', changed);
+  const cleanupUpdates = () => { cancelled = true; clearTimeout(refreshTimer); window.removeEventListener('memepop-market', changed); };
+  disposeChart = cleanupUpdates;
   root.innerHTML =
     '<div class="market-loading">Loading live pool data...</div>';
   try {
     const curve = Boolean(coin.poolId && coin.launchStatus !== 'Graduated');
     const result = await chain.api(`${curve ? '/curve/' : '/market/'}${coin.mint}`);
-    if (!root.isConnected) return;
+    if (!root.isConnected || cancelled) return;
     const pair = result.pair;
     if (!curve && !pair) {
       root.innerHTML = `<p class="fine">${esc(result.chartError)}</p>`;
@@ -342,6 +409,7 @@ export async function mountMarket(coin, { esc }) {
     });
     observer.observe(element);
     disposeChart = () => {
+      cleanupUpdates();
       observer.disconnect();
       chart.remove();
       disposeChart = () => {};

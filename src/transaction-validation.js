@@ -20,6 +20,10 @@ export function validateCurveInstruction(transaction, keys, expected) {
     if (keys.get(instruction.accountKeyIndexes[index])?.toBase58() !== address) throw new Error('Curve transaction destination accounts changed.');
   }
   const userB = keys.get(instruction.accountKeyIndexes[6])?.toBase58();
+  const tokenProgram = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+  const associated = new Set();
+  const signers = transaction.message.staticAccountKeys.slice(0, transaction.message.header.numRequiredSignatures).map(key => key.toBase58());
+  if (signers.some(signer => signer !== expected.owner && signer !== userB)) throw new Error('Unexpected curve transaction signer.');
   if (expected.accounts) {
     if (instruction.accountKeyIndexes.length !== expected.accounts.length) throw new Error('Unexpected curve account count.');
     expected.accounts.forEach((address, index) => {
@@ -30,6 +34,22 @@ export function validateCurveInstruction(transaction, keys, expected) {
   for (const ix of transaction.message.compiledInstructions) {
     const program = keys.get(ix.programIdIndex)?.toBase58();
     const addresses = Array.from(ix.accountKeyIndexes, index => keys.get(index));
+    const names = addresses.map(address => address?.toBase58());
+    if (program === 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL') {
+      const mint = names[1] === expected.userA ? expected.mintA : names[1] === expected.userB ? expected.mintB : null;
+      if (!mint || ![0, 1].includes(ix.data.length) || (ix.data.length === 1 && ix.data[0] !== 1)
+        || ![6, 7].includes(names.length) || names[0] !== expected.owner || names[2] !== expected.owner || names[3] !== mint
+        || names[4] !== '11111111111111111111111111111111' || names[5] !== tokenProgram
+        || (names.length === 7 && names[6] !== 'SysvarRent111111111111111111111111111111111')) throw new Error('Unexpected associated token account creation.');
+      if (associated.has(names[1])) throw new Error('Duplicate token account creation.');
+      associated.add(names[1]);
+    }
+    if (program === tokenProgram) {
+      if (ix.data.length !== 1) throw new Error('Unexpected token instruction data.');
+      if (ix.data[0] === 1 && (names.length !== 4 || names[0] !== userB || names[1] !== expected.mintB || names[2] !== expected.owner || names[3] !== 'SysvarRent111111111111111111111111111111111')) throw new Error('Unexpected wrapped SOL initialization.');
+      if (ix.data[0] === 17 && (names.length !== 1 || names[0] !== userB)) throw new Error('Unexpected wrapped SOL synchronization.');
+      if (ix.data[0] === 9 && names.length !== 3) throw new Error('Unexpected wrapped SOL close accounts.');
+    }
     if (program === '11111111111111111111111111111111') {
       const decoded = new TransactionInstruction({ programId: keys.get(ix.programIdIndex), keys: addresses.map(pubkey => ({ pubkey, isSigner: false, isWritable: true })), data: Buffer.from(ix.data) });
       const type = SystemInstruction.decodeInstructionType(decoded);
@@ -38,6 +58,8 @@ export function validateCurveInstruction(transaction, keys, expected) {
         : type === 'Create' ? SystemInstruction.decodeCreateAccount(decoded) : null;
       if (!value || value.fromPubkey.toBase58() !== expected.owner || (value.toPubkey || value.newAccountPubkey).toBase58() !== userB) throw new Error('Unexpected SOL transfer destination.');
       if (value.programId && value.programId.toBase58() !== 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') throw new Error('Unexpected wrapped SOL account owner.');
+      if (value.space !== undefined && BigInt(value.space) !== 165n) throw new Error('Unexpected wrapped SOL account size.');
+      if (value.basePubkey && value.basePubkey.toBase58() !== expected.owner) throw new Error('Unexpected wrapped SOL seed authority.');
       systemDebit += BigInt(value.lamports);
     }
     if (program === 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' && ix.data[0] === 9

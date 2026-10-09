@@ -2,6 +2,21 @@ import { test, expect } from '@playwright/test';
 import { Keypair, SystemProgram, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { PNG } from 'pngjs';
 
+test('official Pump SDK loads in the browser and builds standard creation without submitting', async ({ page }) => {
+  await page.goto('/');
+  const mint = Keypair.generate().publicKey.toBase58(), owner = Keypair.generate().publicKey.toBase58();
+  const result = await page.evaluate(async ({ mint, owner }) => {
+    const source = await (await fetch('/src/pump-chain.js')).text();
+    const path = source.match(/import\("([^"]+pump-sdk[^\"]*)"\)/)?.[1];
+    if (!path) throw new Error('Pump SDK browser import not found.');
+    const sdk = await import(path), PublicKey = sdk.PUMP_PROGRAM_ID.constructor;
+    const instruction = await sdk.PUMP_SDK.createV2Instruction({ mint: new PublicKey(mint), name: 'Browser test', symbol: 'TEST', uri: 'https://gateway.pinata.cloud/ipfs/Test', creator: new PublicKey(owner), user: new PublicKey(owner), mayhemMode: false });
+    return { program: instruction.programId.toBase58(), token2022: instruction.keys.some(key => key.pubkey.toBase58() === 'TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'), dataLength: instruction.data.length };
+  }, { mint, owner });
+  expect(result.program).toBe('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P');
+  expect(result.token2022).toBe(true); expect(result.dataLength).toBeGreaterThan(8);
+});
+
 async function openLiveLaunch(page, pendingSignIn = false) {
   const wallet = Keypair.generate().publicKey.toBase58();
   await page.addInitScript(({ wallet, pendingSignIn }) => {
@@ -68,6 +83,76 @@ test('launch preparation timeout keeps completed metadata and ignores late RPC c
   await expect(page.locator('#form-error')).toContainText('not Solana mainnet');
   expect(uploads).toBe(1);
   await expect(page.locator('#sign-launch')).toHaveCount(0);
+});
+
+test('initial buy is separately reviewed and rejection preserves the created coin for recovery', async ({ page }) => {
+  const mint = Keypair.generate().publicKey.toBase58(), poolId = Keypair.generate().publicKey.toBase58();
+  await page.route('**/src/chain.js*', async route => {
+    const response = await route.fetch();
+    let source = await response.text();
+    const begin = source.indexOf('export async function prepareLaunch(');
+    const end = source.indexOf('export async function creatorFeeBalance(', begin);
+    expect(end).toBeGreaterThan(begin);
+    source = source.slice(0, begin) + `export async function prepareLaunch() { return { mint: '${mint}', poolId: '${poolId}', protocol: 'pump', supply: '1000000000', transactions: 1, execute: async () => { window.__creations = (window.__creations || 0) + 1; return ['controlled-creation']; } }; }\n` + source.slice(end);
+    const purchase = source.indexOf('export async function prepareLaunchPurchase(');
+    source = source.slice(0, purchase) + `export async function prepareLaunchPurchase(intent) { window.__purchaseAmount = intent.amount; return { output: '1234', minimum: '1200', feeDetails: [['Network fee', '0.000005']], execute: async () => { throw new Error('Wallet rejected initial purchase'); } }; }`;
+    await route.fulfill({ response, body: source });
+  });
+  await page.route('**/api/rpc', route => {
+    const { id, method } = route.request().postDataJSON();
+    return route.fulfill({ json: { jsonrpc: '2.0', id, result: method === 'getBalance' ? { context: { slot: 1 }, value: 1000000000 } : { context: { slot: 1 }, value: [] } } });
+  });
+  await page.route('**/api/metadata', route => route.fulfill({ json: { uri: 'https://gateway.pinata.cloud/ipfs/metadata', image: 'https://gateway.pinata.cloud/ipfs/image' } }));
+  let registrations = 0;
+  await page.route('**/api/coins', route => { registrations++; expect(route.request().postDataJSON().protocol).toBe('pump'); return route.fulfill({ json: { mint, poolId } }); });
+  await openLiveLaunch(page);
+  await page.getByLabel('Initial buy (SOL)', { exact: true }).fill('0.05');
+  expect(await page.locator('#launch-form').evaluate(form => [...form.elements].filter(field => field.validity && !field.validity.valid).map(field => [field.name, field.validationMessage]))).toEqual([]);
+  await page.getByRole('button', { name: 'Prepare live launch', exact: true }).click();
+  await expect(page.locator('.launch-terms')).toContainText('0.05 SOL · separate approval');
+  await page.getByRole('button', { name: 'Sign and launch', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Get initial buy quote' })).toBeVisible();
+  expect(registrations).toBe(1);
+  expect(await page.evaluate(() => window.__creations)).toBe(1);
+  await page.getByRole('button', { name: 'Get initial buy quote' }).click();
+  await expect(page.locator('#initial-quote')).toContainText('1200');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await page.evaluate(() => window.__purchaseAmount)).toBe('0.05');
+  await page.getByRole('button', { name: 'Sign initial buy', exact: true }).click();
+  await expect(page.locator('.form-error')).toContainText('Your coin remains created');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('yn-launch-purchases'))[0].state)).toBe('ready');
+  expect(await page.evaluate(() => window.__creations)).toBe(1);
+});
+
+test('indexed market refresh notifications debounce updates and stop in demo mode', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__marketCallbacks = {};
+    window.EventSource = class {
+      constructor(url) { window.__marketURL = url; }
+      addEventListener(name, callback) { window.__marketCallbacks[name] = callback; }
+      close() { window.__marketClosed = true; }
+    };
+  });
+  await page.route('**/api/status', route => route.fulfill({ json: { marketEvents: true } }));
+  await page.route('**/api/launches*', route => route.fulfill({ json: [] }));
+  let reads = 0;
+  await page.route('**/api/tokens*', route => { reads++; return route.fulfill({ json: [] }); });
+  await page.goto('/');
+  await page.locator('[data-mode="live"]').click();
+  await expect.poll(() => page.evaluate(() => Boolean(window.__marketCallbacks.market))).toBe(true);
+  expect(await page.evaluate(() => window.__marketURL)).toBe('/api/market/events');
+  await expect.poll(() => reads).toBeGreaterThan(0);
+  await expect(page.locator('#coins')).toContainText('No coins here yet.');
+  await page.clock.install();
+  const previous = reads;
+  await page.evaluate(() => {
+    for (let i = 0; i < 10; i++) window.__marketCallbacks.market({ data: JSON.stringify({ mint: 'controlled' }) });
+  });
+  await page.clock.fastForward(6000);
+  await expect.poll(() => reads).toBe(previous + 1);
+  await page.locator('[data-mode="demo"]').click();
+  expect(await page.evaluate(() => window.__marketClosed)).toBe(true);
 });
 
 test('MemePop uses the supplied logo and its palette without responsive overflow', async ({ page }) => {
@@ -164,7 +249,8 @@ test('creator artwork persists, can be changed, and demo funds are accounted for
   await page.locator('.coin').first().click(); await page.locator('[name=amount]').fill('11'); await page.locator('#trade-submit').click();
   await expect(page.locator('#form-error')).toContainText('Insufficient demo SOL');
   await page.locator('[name=amount]').fill('1'); await page.locator('#trade-submit').click();
-  await expect(page.locator('#wallet')).toContainText('9.00 SOL');
+  await expect(page.locator('#wallet')).toContainText('Demo wallet');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('yn-balance')))).toBe(9);
   await page.locator('[data-page="Portfolio"]').click(); await expect(page.locator('.coin')).toHaveCount(1);
   expect(errors).toEqual([]);
 });

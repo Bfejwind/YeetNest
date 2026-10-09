@@ -78,6 +78,7 @@ test('extension-free web wallet loads the official Solflare connection surface',
 test('phone QR opens a wallet-browser session without claiming desktop pairing', async ({ page }) => {
   await page.route('https://wallet-test.example/**', async route => {
     const url = new URL(route.request().url());
+    if (url.pathname.startsWith('/api/')) return route.fulfill({ json: url.pathname.includes('launches') ? [] : {} });
     const response = await route.fetch({ url: `http://localhost:5174${url.pathname}${url.search}` });
     await route.fulfill({ response });
   });

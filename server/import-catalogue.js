@@ -3,11 +3,11 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { LAUNCHPAD_PROGRAM, LaunchpadPool, getPdaLaunchpadPoolId } from '@raydium-io/raydium-sdk-v2';
-import { createAppStore } from './app-store.js';
+import { createCatalogueStore } from './catalogue-store.js';
 
 const directory = resolve(process.env.DATA_DIR || 'data');
 if (!process.env.DATABASE_URL) throw new Error('Configure server-only DATABASE_URL.');
-const store = createAppStore({ databaseUrl: process.env.DATABASE_URL });
+const store = createCatalogueStore({ databaseUrl: process.env.DATABASE_URL });
 try {
   await store.ready();
   const load = async filename => {
@@ -36,8 +36,8 @@ try {
   }
   console.log(`Verified export: ${coins.length} coins, ${references.length} upload references. Existing database records will not be overwritten.`);
   if (process.argv.includes('--apply')) {
-    await store.mutate('upload-references', rows => { for (const entry of references) if (!rows.some(([key]) => key === entry[0])) rows.push(entry); });
-    await store.mutate('coins', rows => { for (const coin of coins) if (!rows.some(row => row.mint === coin.mint)) rows.push(coin); });
+    for (const [key, value] of references) await store.upload({ ...value, uri: value.uri || key.slice(value.wallet.length + 1) }, { overwrite: false });
+    for (const coin of coins) await store.insert(coin);
     console.log('Catalogue import complete.');
   } else console.log('Dry run only. Back up both sources before rerunning with --apply.');
 } catch {

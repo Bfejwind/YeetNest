@@ -1,4 +1,4 @@
-export function installCommunity(app, { store, auth, security, address, text, route, fail, moderators = [] }) {
+export function installCommunity(app, { store, auth, security, address, text, route, fail, moderators = [], catalogue }) {
   const uuid = value => {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw fail('Invalid comment ID.');
     return value;
@@ -9,6 +9,25 @@ export function installCommunity(app, { store, auth, security, address, text, ro
     return wallet;
   };
   app.get('/api/community/profiles/:wallet', route(async (req, res) => res.json(await store.getProfile(address(req.params.wallet)))));
+  app.get('/api/community/following', route(async (req, res) => {
+    const wallet = await auth(req), offset = Number(req.query.offset || 0), limit = Number(req.query.limit || 50);
+    if (!Number.isInteger(offset) || offset < 0 || offset > 100000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw fail('Invalid following page.');
+    const rows = await store.following(wallet, { offset, limit: limit + 1 });
+    res.json({ follows: rows.slice(0, limit), hasMore: rows.length > limit });
+  }));
+  app.put('/api/community/following/:wallet', route(async (req, res) => {
+    const wallet = await writeIdentity(req), following = address(req.params.wallet);
+    if (wallet === following || typeof req.body.follow !== 'boolean') throw fail('Choose a different wallet and a follow setting.');
+    await store.follow(wallet, following, req.body.follow);
+    res.json({ following, follow: req.body.follow });
+  }));
+  app.post('/api/community/account/delete', route(async (req, res) => {
+    const wallet = await writeIdentity(req);
+    if (req.body.confirm !== wallet) throw fail('Confirm your connected wallet address to delete app data.');
+    await store.deleteAccount(wallet);
+    if (store.kind !== 'postgres') await catalogue.setWatchlist(wallet, []);
+    res.json({ deleted: true, retained: ['public blockchain and coin listings', 'published IPFS metadata and artwork', 'moderation reports', 'provider backups until retention expiry'] });
+  }));
   app.post('/api/community/profile', route(async (req, res) => {
     const wallet = await writeIdentity(req);
     const name = text(req.body.name, 24);
@@ -29,6 +48,13 @@ export function installCommunity(app, { store, auth, security, address, text, ro
   app.get('/api/moderation/reports', route(async (req, res) => {
     await moderator(req);
     res.json(await store.listReports());
+  }));
+  app.get('/api/moderation/history', route(async (req, res) => {
+    await moderator(req);
+    const offset = Number(req.query.offset || 0), limit = Number(req.query.limit || 50);
+    if (!Number.isInteger(offset) || offset < 0 || offset > 100000 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw fail('Invalid moderation history page.');
+    const rows = await store.moderationHistory({ offset, limit: limit + 1 });
+    res.json({ reports: rows.slice(0, limit), hasMore: rows.length > limit });
   }));
   app.post('/api/moderation/comments/:id', route(async (req, res) => {
     const wallet = await moderator(req);

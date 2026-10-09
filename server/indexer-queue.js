@@ -11,8 +11,18 @@ export function createIndexerQueue(databaseUrl, { now = Date.now, leaseMs = 1200
   const pool = new pg.Pool({ ...databaseConfig(databaseUrl), max: 4, idleTimeoutMillis: 30000 });
   pool.on('error', () => console.error('Indexer queue database connection error.'));
   return {
-    ready: () => pool.query('SELECT signature FROM indexer_jobs LIMIT 0'),
+    ready: async () => { await pool.query('SELECT signature FROM indexer_jobs LIMIT 0'); await pool.query('SELECT id FROM indexer_workers LIMIT 0'); },
     close: () => pool.end(),
+    heartbeat: async (id, role) => { await pool.query('INSERT INTO indexer_workers(id,queue_name,role,updated) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET updated=EXCLUDED.updated', [id, name, role, now()]); },
+    workers: async () => (await pool.query('SELECT id,role,updated FROM indexer_workers WHERE queue_name=$1 AND updated>$2 ORDER BY updated DESC LIMIT 100', [name, now() - 90000])).rows,
+    failed: async () => (await pool.query("SELECT signature,attempts,error_code,updated FROM indexer_jobs WHERE queue_name=$1 AND status='failed' ORDER BY updated,signature LIMIT 100", [name])).rows,
+    retry: async signature => (await pool.query("UPDATE indexer_jobs SET status='pending',attempts=0,error_code=NULL,lease_until=NULL,lease_token=NULL,available_at=$3,updated=$3 WHERE queue_name=$1 AND signature=$2 AND status='failed'", [name, signature, now()])).rowCount === 1,
+    prune: async () => {
+      const cutoff = now() - 7 * 86400000;
+      const result = await pool.query("DELETE FROM indexer_jobs WHERE queue_name=$1 AND signature IN (SELECT signature FROM indexer_jobs WHERE queue_name=$1 AND status='done' AND updated<$2 ORDER BY updated LIMIT 1000)", [name, cutoff]);
+      await pool.query('DELETE FROM indexer_workers WHERE queue_name=$1 AND id IN (SELECT id FROM indexer_workers WHERE queue_name=$1 AND updated<$2 LIMIT 1000)', [name, cutoff]);
+      return result.rowCount;
+    },
     enqueue: async rows => {
       if (!rows.length) return;
       const time = now();

@@ -3,14 +3,15 @@ import brandLogo from '../logo.png';
 import { createAvatar } from "@dicebear/core";
 import * as bottts from "@dicebear/bottts-neutral";
 import * as chain from "./chain.js";
-import { fromUnits } from "./amounts.js";
-import { installLaunchpadUI, mountMarket, cleanupMarket } from "./launchpad-ui.js";
+import { fromUnits, toUnits } from "./amounts.js";
+import { installLaunchpadUI, mountMarket, cleanupMarket, reviewInitialPurchase } from "./launchpad-ui.js";
 import "./color-theme.css";
 import "./dark-theme.css";
 import "./pump-theme.css";
 import { installMarketUI, mountDiscussion } from "./market-ui.js";
 import { walletBrowseLink } from './wallet-links.js';
 import { withTimeout } from './async-timeout.js';
+import { configureMarketEvents } from './market-events.js';
 
 const I = (name) => `<i data-lucide="${name}"></i>`;
 const esc = (value) =>
@@ -91,6 +92,7 @@ const connected = () =>
   mode === "demo" ? demoWallet : Boolean(chain.publicKey);
 const short = (address) => `${address.slice(0, 4)}...${address.slice(-4)}`;
 function image(coin) {
+  if (!coin.image && coin.uri && coin.mint && mode === 'live') return `/api/metadata/${encodeURIComponent(coin.mint)}/artwork`;
   if (coin.image && /^data:image\/(png|jpeg|webp);base64,/.test(coin.image))
     return coin.image;
   if (coin.image && /^https:\/\//.test(coin.image))
@@ -119,6 +121,10 @@ function image(coin) {
 }
 const art = (coin) =>
   `<img src="${esc(image(coin))}" alt="${esc(coin.name)}" loading="lazy"/>`;
+document.addEventListener('error', event => {
+  const element = event.target;
+  if (element instanceof HTMLImageElement && element.getAttribute('src')?.startsWith('/api/metadata/')) element.src = image({ ticker: element.alt || 'TOKEN' });
+}, true);
 function persist() {
   localStorage.setItem("yn-coins", JSON.stringify(demoCoins));
   if (mode === 'demo') localStorage.setItem("yn-watchlist", JSON.stringify(watchlist));
@@ -162,7 +168,8 @@ function filtered() {
             .includes(query.toLowerCase())) &&
         (category === "All coins" ||
           (mode === 'live' && category === 'MemePop' && t.source === 'MemePop') ||
-          (mode === 'live' && category === 'LaunchLab' && Boolean(t.poolId)) ||
+          (mode === 'live' && category === 'Pump' && t.protocol === 'pump') ||
+          (mode === 'live' && category === 'LaunchLab' && Boolean(t.poolId) && t.protocol !== 'pump') ||
           (mode === 'live' && category === 'Market' && !t.poolId) ||
           (mode === 'demo' && (category === "Stocks"
             ? t.pair.endsWith("x")
@@ -253,6 +260,9 @@ function render() {
     drawCoins();
   }
   bind();
+  configureMarketEvents(mode === 'live' && Boolean(config?.marketEvents), () => {
+    if (mode === 'live' && !document.querySelector('.overlay') && ['Explore', 'Watchlist'].includes(page)) refreshLive(true);
+  });
   installLaunchpadUI({
     page,
     mode,
@@ -490,6 +500,11 @@ function bind() {
         render();
       }),
   );
+  if (mode === 'live') {
+    document.querySelector('[data-category="LaunchLab"]')?.insertAdjacentHTML('beforebegin', `<button data-category="Pump" class="${category === 'Pump' ? 'chosen' : ''}">Pump</button>`);
+    const footer = document.querySelector('footer span:last-child');
+    if (footer) footer.textContent = 'Solana / Pump / PumpSwap';
+  }
   document.querySelectorAll("[data-category]").forEach(
     (b) =>
       (b.onclick = () => {
@@ -557,18 +572,20 @@ async function refreshStatusAndMarket() {
   else render();
 }
 let liveRequest = 0;
-let liveIndexOffset = 0, liveIndexHasMore = false;
+let liveIndexOffset = 0, liveIndexHasMore = false, liveIndexCursor = null;
 async function loadMoreIndexed() {
   const expectedQuery = query, expectedRequest = liveRequest;
   loading = true;
   drawCoins();
   try {
-    const result = await chain.api(`/launches/indexed?query=${encodeURIComponent(expectedQuery)}&offset=${liveIndexOffset}&limit=100`);
+    const page = liveIndexCursor ? `cursor=${encodeURIComponent(liveIndexCursor)}` : `offset=${liveIndexOffset}`;
+    const result = await chain.api(`/launches/indexed?query=${encodeURIComponent(expectedQuery)}&${page}&limit=100`);
     if (query !== expectedQuery || liveRequest !== expectedRequest || mode !== 'live') return;
     const merged = new Map(liveCoins.map(coin => [coin.mint, coin]));
     for (const coin of result.coins || []) merged.set(coin.mint, { ...merged.get(coin.mint), ...coin });
     liveCoins = [...merged.values()];
     liveIndexOffset += (result.coins || []).length;
+    liveIndexCursor = result.nextCursor || null;
     liveIndexHasMore = Boolean(result.hasMore);
   } catch (error) { toast(error.message); }
   finally { if (liveRequest === expectedRequest) loading = false; }
@@ -597,6 +614,7 @@ async function refreshLive(background = false) {
       : [];
   const registered = results[1].status === "fulfilled" ? results[1].value : [];
   liveIndexOffset = results[2].status === 'fulfilled' ? (results[2].value.coins || []).length : 0;
+  liveIndexCursor = results[2].status === 'fulfilled' ? results[2].value.nextCursor || null : null;
   liveIndexHasMore = results[2].status === 'fulfilled' && Boolean(results[2].value.hasMore);
   const merged = new Map(remote.map((c) => [c.mint, c]));
   if (results[2].status === 'fulfilled') for (const c of results[2].value.coins || []) merged.set(c.mint, { ...merged.get(c.mint), ...c });
@@ -824,8 +842,13 @@ function launch() {
   let uploaded = "";
   let uploadedMetadata = null, uploadedMetadataKey = '';
   modal(
-    `<span class="eyebrow">${mode === "demo" ? "DEMO LAUNCH" : "RAYDIUM / MAINNET"}</span><h2>Hatch your coin.</h2><form id="launch-form"><label class="upload-control"><span class="upload-preview" id="upload-preview">${I("image-plus")}</span><span>Coin artwork<small>PNG, JPEG, WebP, GIF · up to 5 MB</small></span><input id="coin-image" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" ${mode === "live" ? "required" : ""}/></label><div class="form-row"><label>Coin name<input name="name" required maxlength="32" placeholder="Your next big idea"/></label><label>Ticker<input name="ticker" required maxlength="10" pattern="[A-Za-z0-9]+" placeholder="YEET"/></label></div><label>Description<textarea name="description" maxlength="500" placeholder="Give your flock a story."></textarea></label>${mode === "demo" ? `<div class="form-row"><label>Quote asset<select name="pair"><option>SOL</option><option>USDC</option><option>NVDAx</option><option>SPYx</option><option>TSLAx</option><option>QQQx</option><option>OPENAI</option><option>ANTHROPIC</option></select></label><label>Launch type<select name="launchMode"><option>Standard</option></select></label></div><p class="fine">Local demo launch. No on-chain token is created.</p>` : `<div class="launch-terms"><span>Quote asset <b>SOL</b></span><span>Launch mode <b>Standard</b></span><span>Migration <b>Raydium CPMM</b></span><span>Initial buy <b>None</b></span></div><p class="fine">Public IPFS artwork and metadata. Raydium default economics apply. Network fees are paid by your wallet.</p>${!config?.uploads ? `<div class="notice">${I("key-round")} Configure server PINATA_JWT to enable public uploads.</div>` : ""}`}<p class="form-error" id="form-error" role="alert"></p><button class="primary full" type="submit">${I("egg")} ${mode === "demo" ? "Hatch demo coin" : "Prepare live launch"}</button></form>`,
+    `<span class="eyebrow">${mode === "demo" ? "DEMO LAUNCH" : "RAYDIUM / MAINNET"}</span><h2>Hatch your coin.</h2><form id="launch-form"><label class="upload-control"><span class="upload-preview" id="upload-preview">${I("image-plus")}</span><span>Coin artwork<small>PNG, JPEG, WebP, GIF · up to 5 MB</small></span><input id="coin-image" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" ${mode === "live" ? "required" : ""}/></label><div class="form-row"><label>Coin name<input name="name" required maxlength="32" placeholder="Your next big idea"/></label><label>Ticker<input name="ticker" required maxlength="10" pattern="[A-Za-z0-9]+" placeholder="YEET"/></label></div><label>Description<textarea name="description" maxlength="500" placeholder="Give your flock a story."></textarea></label>${mode === "demo" ? `<div class="form-row"><label>Quote asset<select name="pair"><option>SOL</option><option>USDC</option><option>NVDAx</option><option>SPYx</option><option>TSLAx</option><option>QQQx</option><option>OPENAI</option><option>ANTHROPIC</option></select></label><label>Launch type<select name="launchMode"><option>Standard</option></select></label></div><p class="fine">Local demo launch. No on-chain token is created.</p>` : `<div class="launch-terms"><span>Quote asset <b>SOL</b></span><span>Launch mode <b>Standard</b></span><span>Migration <b>Raydium CPMM</b></span></div><div class="form-row"><label>Initial buy (SOL)<input name="initialBuy" inputmode="decimal" value="0" pattern="[0-9]+([.][0-9]+)?" required/></label><label>Initial buy slippage<select name="initialSlippage"><option value="50">0.5%</option><option value="100" selected>1%</option><option value="200">2%</option><option value="500">5%</option></select></label></div><p class="fine">Public IPFS artwork and metadata. Raydium default economics apply. Network fees are paid by your wallet.</p>${!config?.uploads ? `<div class="notice">${I("key-round")} Configure server PINATA_JWT to enable public uploads.</div>` : ""}`}<p class="form-error" id="form-error" role="alert"></p><button class="primary full" type="submit">${I("egg")} ${mode === "demo" ? "Hatch demo coin" : "Prepare live launch"}</button></form>`,
     () => {
+      if (mode === 'live') {
+        document.querySelector('.modal > .eyebrow').textContent = 'PUMP / MAINNET';
+        document.querySelector('#launch-form .launch-terms span:last-child b').textContent = 'PumpSwap';
+        document.querySelector('#launch-form .fine').textContent = 'Public IPFS artwork and metadata. Pump standard SOL curve, Token-2022 mint and dynamic protocol fees. Network fees are paid by your wallet.';
+      }
       document.querySelector("#coin-image").onchange = async (e) => {
         try {
           uploaded = await normalizeImage(e.target.files[0]);
@@ -897,6 +920,9 @@ function launch() {
                 "Configure Pinata or a public HTTPS upload domain in Integrations.",
               );
             const owner = chain.publicKey.toBase58();
+            d.initialBuy = /^0+(\.0+)?$/.test(d.initialBuy || '0') ? '0' : fromUnits(toUnits(d.initialBuy, 9), 9);
+            d.initialSlippage = Number(d.initialSlippage || 100);
+            if (![50, 100, 200, 500].includes(d.initialSlippage)) throw new Error('Invalid initial buy slippage.');
             button.textContent = "Waiting for wallet sign-in...";
             await chain.authenticate();
             if (!form.isConnected) return;
@@ -944,8 +970,12 @@ function launch() {
 }
 function reviewLaunch(prepared, metadata, d) {
   modal(
-    `<span class="eyebrow">LIVE LAUNCH / REVIEW</span><h2>Ready to make it pop?</h2><div class="detail-heading"><img src="${esc(metadata.image)}" alt="${esc(d.name)}"/><div><h3>${esc(d.name)}</h3><span>$${esc(d.ticker.toUpperCase())}</span></div></div><div class="launch-terms"><span>Network <b>Solana mainnet</b></span><span>Supply <b>${prepared.supply}</b></span><span>Transactions <b>${prepared.transactions}</b></span><span>Initial buy <b>None</b></span>${prepared.economics ? `<span>Curve allocation <b>${esc(prepared.economics.curveSupply)} tokens</b></span><span>Fundraising target <b>${esc(prepared.economics.fundraisingTarget)} SOL</b></span><span>Migration fee <b>${esc(prepared.economics.migrationFee)} SOL</b></span><span>Protocol / platform / creator trading fees <b>${esc(prepared.economics.protocolFeePercent)}% / ${esc(prepared.economics.platformFeePercent)}% / ${esc(prepared.economics.creatorFeePercent)}%</b></span><span>Estimated network fees <b>${esc(prepared.economics.networkFees)} SOL</b></span>` : ""}</div><p class="address">Mint: ${esc(prepared.mint)}</p><p class="fine">Review transactions and network fees in your wallet. Raydium's default platform economics apply. Wallet confirmation submits a real token launch.</p><p class="form-error" id="form-error"></p><button class="primary full" id="sign-launch">${I("pen-line")} Sign and launch</button>`,
+    `<span class="eyebrow">LIVE LAUNCH / REVIEW</span><h2>Ready to make it pop?</h2><div class="detail-heading"><img src="${esc(metadata.image)}" alt="${esc(d.name)}"/><div><h3>${esc(d.name)}</h3><span>$${esc(d.ticker.toUpperCase())}</span></div></div><div class="launch-terms"><span>Network <b>Solana mainnet</b></span><span>Supply <b>${prepared.supply}</b></span><span>Transactions <b>${prepared.transactions}</b></span><span>Initial buy <b>${d.initialBuy && d.initialBuy !== "0" ? `${esc(d.initialBuy)} SOL · separate approval` : "None"}</b></span>${prepared.economics ? `<span>Curve allocation <b>${esc(prepared.economics.curveSupply)} tokens</b></span><span>Fundraising target <b>${esc(prepared.economics.fundraisingTarget)} SOL</b></span><span>Migration fee <b>${esc(prepared.economics.migrationFee)} SOL</b></span><span>Protocol / platform / creator trading fees <b>${esc(prepared.economics.protocolFeePercent)}% / ${esc(prepared.economics.platformFeePercent)}% / ${esc(prepared.economics.creatorFeePercent)}%</b></span><span>Estimated network fees <b>${esc(prepared.economics.networkFees)} SOL</b></span>` : ""}</div><p class="address">Mint: ${esc(prepared.mint)}</p><p class="fine">Review transactions and network fees in your wallet. Raydium's default platform economics apply. Wallet confirmation submits a real token launch.</p><p class="form-error" id="form-error"></p><button class="primary full" id="sign-launch">${I("pen-line")} Sign and launch</button>`,
     () => {
+      if (prepared.protocol === 'pump') {
+        document.querySelector('.modal > .fine').textContent = 'Pump standard SOL launch with Token-2022 mint and migration to PumpSwap. Trading fee tiers can change. Review transactions and fees in your wallet; approval creates a real coin.';
+        if (prepared.economics) document.querySelector('.launch-terms span:nth-child(6) b').textContent = 'Determined by Pump reserves';
+      }
       document.querySelector("#sign-launch").onclick = async (e) => {
         const b = e.currentTarget;
         b.disabled = true;
@@ -955,13 +985,16 @@ function reviewLaunch(prepared, metadata, d) {
           const record = {
             mint: prepared.mint,
             poolId: prepared.poolId,
+            protocol: prepared.protocol || 'raydium',
             uri: metadata.uri,
           };
             localStorage.setItem(
             "yn-pending-registration",
               JSON.stringify({ ...record, wallet: chain.publicKey.toBase58() }),
           );
+          const initialPurchase = d.initialBuy && d.initialBuy !== '0' ? chain.saveLaunchPurchase({ wallet: chain.publicKey.toBase58(), mint: prepared.mint, poolId: prepared.poolId, protocol: prepared.protocol || 'raydium', ticker: d.ticker.toUpperCase(), amount: d.initialBuy, slippageBps: d.initialSlippage, state: 'requested' }) : null;
             signatures = await prepared.execute();
+          if (initialPurchase) chain.saveLaunchPurchase({ ...initialPurchase, state: 'ready' });
           await chain.api("/coins", {
             method: "POST",
             body: JSON.stringify(record),
@@ -973,6 +1006,7 @@ function reviewLaunch(prepared, metadata, d) {
             prepared.mint,
           );
           refreshLive();
+          if (initialPurchase) reviewInitialPurchase(initialPurchase, { modal, esc, toast, transactionResult });
         } catch (error) {
           inlineError(
             new Error(
@@ -1023,6 +1057,30 @@ function detail(id) {
     () => {
       if (owns)
         document.querySelector("#edit-art").onclick = () => editArtwork(coin);
+      if (mode === 'live' && coin.protocol === 'pump') document.querySelector('#trade-form .fine').textContent = 'Pump bonding curve until completion; canonical PumpSwap pool after migration. Review the quote before signing.';
+      if (mode === 'live' && !coin.description && coin.uri && coin.mint) {
+        const description = document.querySelector('.coin-description');
+        chain.api(`/metadata/${coin.mint}`).then(metadata => { if (description.isConnected && metadata.description) description.textContent = metadata.description; }).catch(() => {});
+      }
+      if (mode === 'live' && coin.streamUrl && /^https:\/\/customer-[a-z0-9]+\.cloudflarestream\.com\/[a-f0-9]{32}\/iframe$/.test(coin.streamUrl)) {
+        const frame = document.createElement('iframe');
+        frame.src = coin.streamUrl; frame.title = `${coin.name} broadcast`; frame.allow = 'autoplay; encrypted-media; picture-in-picture'; frame.allowFullscreen = true;
+        frame.style.cssText = 'display:block;width:100%;aspect-ratio:16/9;border:0;margin:16px 0';
+        document.querySelector('#trade-form').before(frame);
+      }
+      if (mode === 'live' && owns) {
+        const button = document.createElement('button');
+        button.className = 'icon-button'; button.title = 'Manage broadcast'; button.innerHTML = I('video');
+        document.querySelector('.detail-heading').append(button);
+        button.onclick = () => modal(`<h2>Broadcast</h2><form id="stream-form"><label>Cloudflare player URL<input name="streamUrl" type="url" value="${esc(coin.streamUrl || '')}" placeholder="https://customer-...cloudflarestream.com/.../iframe"/></label><p class="form-error" role="alert"></p><button class="primary full" type="submit">${I('save')} Save broadcast</button></form>`, () => {
+          document.querySelector('#stream-form').onsubmit = async event => {
+            event.preventDefault(); const form = event.currentTarget, save = form.querySelector('button'); save.disabled = true;
+            try { await chain.authenticate(); await chain.api(`/coins/${coin.mint}/stream`, { method: 'PUT', body: JSON.stringify({ streamUrl: new FormData(form).get('streamUrl') }) }); closeModal(); await refreshLive(); toast('Broadcast updated.'); }
+            catch (error) { form.querySelector('.form-error').textContent = error.message; save.disabled = false; }
+          };
+        });
+        createIcons({ icons });
+      }
       mountDiscussion(coin, { mode, esc, toast });
       const socialLinks = Object.entries(coin.socials || {}).filter(([, url]) =>
         /^https:\/\//.test(url),
@@ -1145,7 +1203,7 @@ function detail(id) {
 }
 function reviewTrade(coin, side, amount, quote) {
   modal(
-    `<span class="eyebrow">SOLANA MAINNET / LIVE TRADE</span><h2>Review your ${side.toLowerCase()}.</h2><div class="trade-review"><span>You pay <b>${esc(amount)} ${side === "Buy" ? "SOL" : esc(coin.ticker)}</b></span><span>You receive (estimate) <b>${esc(quote.output)} ${esc(quote.outputSymbol)}</b></span><span>Route <b>${esc(quote.route)}</b></span><span>Trading fee <b>${esc(quote.fee)}</b></span><span>Slippage <b>${esc(quote.slippage)}</b></span><span>Wallet <b>${esc(short(chain.publicKey.toBase58()))}</b></span></div><p class="fine">Network fees are additional. Quote expires in 45 seconds. Your wallet shows the final transaction before signing.</p><p class="form-error" id="form-error" role="alert"></p><button class="primary full" id="sign-trade">${I("pen-line")} Sign and submit</button>`,
+    `<span class="eyebrow">SOLANA MAINNET / LIVE TRADE</span><h2>Review your ${side.toLowerCase()}.</h2><div class="trade-review"><span>${quote.inputIsMaximum ? 'Maximum SOL input' : 'You pay'} <b>${esc(amount)} ${side === "Buy" ? "SOL" : esc(coin.ticker)}</b></span><span>${quote.inputIsMaximum ? 'Target tokens' : 'You receive (estimate)'} <b>${esc(quote.output)} ${esc(quote.outputSymbol)}</b></span><span>Route <b>${esc(quote.route)}</b></span><span>Trading fee <b>${esc(quote.fee)}</b></span><span>Slippage <b>${esc(quote.slippage)}</b></span><span>Wallet <b>${esc(short(chain.publicKey.toBase58()))}</b></span></div><p class="fine">Network fees are additional. Quote expires in 45 seconds. Your wallet shows the final transaction before signing.</p><p class="form-error" id="form-error" role="alert"></p><button class="primary full" id="sign-trade">${I("pen-line")} Sign and submit</button>`,
     () => {
       document.querySelector("#sign-trade").onclick = async (e) => {
         const b = e.currentTarget;

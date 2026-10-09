@@ -1,4 +1,6 @@
-# YeetNest Deployment
+# MemePop Deployment
+
+October 9 Pump/PumpSwap rollout: follow [PUMP_ROLLOUT.md](PUMP_ROLLOUT.md) and [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md). Migrations through 012 and INDEXER_PROTOCOL=pump are required for the new default. Old LaunchLab-only deployment notes below are historical where they conflict. No public deployment or funded acceptance has been performed.
 
 ## October 7 Render Configuration
 
@@ -14,13 +16,13 @@ This section supersedes the older pilot instructions below. See [AUDIT_REPORT.md
 
 Render supplies HTTPS. API/RPC requests use the browser's current origin. No separate frontend API URL, permissive CORS, cookie configuration or WebSocket URL is required. PostgreSQL-backed bearer sessions survive restarts until their one-hour expiry; only the browser's bearer token remains in memory, so a browser reload can require signing in again.
 
-Migrations `001-community.sql` and `002-app-records.sql` were run successfully against the configured local destination on October 7. If Render points elsewhere, migrate that database too. Pool caps are 10 community plus 5 application connections per instance. Future non-idempotent upgrades need migration-version tracking.
+Migrations through `012-social.sql` were run successfully against the configured destination on October 9. If Render points elsewhere, migrate that database too. The checksum migration ledger tracks applied files; never edit applied SQL, add another numbered migration instead. API pool caps total 33 connections per instance; all-role workers can use another 14. Reserve operational headroom and budget for every replica.
 
 Before switching JSON storage, securely back up `coins.json`, `upload-references.json`, `community.json` and self-hosted `public/` media. Point local `DATA_DIR` to the trusted export and privately configure database/RPC. Run `npm run db:import-catalogue` for a read-only ownership/mainnet-verified dry run. After reviewing counts and backing up PostgreSQL, run `npm run db:import-catalogue -- --apply`; existing database records are never overwritten. Community JSON needs a separately reviewed parameterized import. Retain backups and continue serving existing media URLs. Importing is never automatic.
 
 Official references: [Render Web Services](https://render.com/docs/web-services), [Pre-Deploy Commands](https://render.com/docs/deploys#pre-deploy-command), [Health Checks](https://render.com/docs/health-checks), [Persistent Disks](https://render.com/docs/disks), [PostgreSQL](https://render.com/docs/postgresql).
 
-The current release is a single-process launchpad. Do not run multiple replicas against its JSON catalogue. It is not an audited production trading platform.
+The PostgreSQL path supports shared catalogue, sessions, quotas, watchlists and indexer coordination. The JSON fallback remains single-process: do not run multiple replicas against it. Shared storage is not proof of Pump.fun-scale throughput or an audited production trading platform.
 
 ## Local Provider Setup
 

@@ -37,6 +37,7 @@ const server = app.listen(port, '0.0.0.0', () => {
 function shutdown() {
   if (stopping) return;
   stopping = true;
+  api.locals.stopStreams();
   server.close(async error => {
     try { await api.locals.close(); process.exitCode = error ? 1 : 0; }
     catch { process.exitCode = 1; }
