@@ -21,16 +21,22 @@ export async function preparePumpCreatorClaim(context) {
   const pump = await sdk(context.connection, context.pumpSdk), owner = context.wallet();
   const balance = await pumpCreatorFeeBalance(context);
   if (balance.amount === '0') throw new Error('No collected Pump/PumpSwap SOL creator fees are available. Unswept curve/pool fees are not included.');
-  const instructions = (await pump.online.collectCoinCreatorFeeInstructions(owner, owner)).filter(instruction => !(instruction.programId.toBase58() === TOKEN && instruction.data[0] === 9));
-  const built = await preparedTransaction(context, instructions, { record: { operation: 'creator-claim', protocol: 'pump' } });
+  const curveBalance = await pump.online.getCreatorVaultBalance(owner);
+  const total = new BN(toUnits(balance.amount, 9));
+  const hasAmmFees = total.gt(curveBalance);
+  const instructions = (await pump.online.collectCoinCreatorFeeInstructions(owner, owner)).filter(instruction => {
+    if (instruction.programId.equals(pump.PUMP_PROGRAM_ID)) return !curveBalance.isZero();
+    return hasAmmFees && !(instruction.programId.toBase58() === TOKEN && instruction.data[0] === 9);
+  });
+  const built = await preparedTransaction(context, instructions, { refreshBeforeSigning: true, record: { operation: 'creator-claim', protocol: 'pump' } });
   return { ...built, ...balance };
 }
 
-async function preparedTransaction(context, instructions, { signers = [], spend = 0n, record = {}, onSubmitted } = {}) {
+async function preparedTransaction(context, instructions, { signers = [], spend = 0n, record = {}, onSubmitted, refreshBeforeSigning = false } = {}) {
   const { connection, wallet, submit } = context, owner = wallet().toBase58();
   const blockhash = await connection.getLatestBlockhash('confirmed');
   const reviewed = [ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }), ...instructions];
-  const transaction = new VersionedTransaction(new TransactionMessage({ payerKey: new PublicKey(owner), recentBlockhash: blockhash.blockhash, instructions: reviewed }).compileToV0Message());
+  let transaction = new VersionedTransaction(new TransactionMessage({ payerKey: new PublicKey(owner), recentBlockhash: blockhash.blockhash, instructions: reviewed }).compileToV0Message());
   transaction.sign(signers);
   validateLocalInstructions(transaction, reviewed, owner, signers.map(signer => signer.publicKey.toBase58()));
   const fee = (await connection.getFeeForMessage(transaction.message, 'confirmed')).value;
@@ -45,6 +51,14 @@ async function preparedTransaction(context, instructions, { signers = [], spend 
   return { expires, networkFee: fromUnits(String(fee), 9), rentReserve: fromUnits(String(rentReserve), 9), async execute() {
     if (used || Date.now() > expires) throw new Error('Pump review used or expired. Prepare again.');
     if (wallet()?.toBase58() !== owner) throw new Error('Wallet changed. Prepare again.');
+    if (refreshBeforeSigning) {
+      const fresh = await connection.getLatestBlockhash('confirmed');
+      transaction = new VersionedTransaction(new TransactionMessage({ payerKey: new PublicKey(owner), recentBlockhash: fresh.blockhash, instructions: reviewed }).compileToV0Message());
+      transaction.sign(signers);
+      const checked = await connection.simulateTransaction(transaction);
+      if (checked.value.err) throw new Error(`Pump claim simulation failed: ${JSON.stringify(checked.value.err)}. No transaction was submitted.`);
+      if (wallet()?.toBase58() !== owner || Date.now() > expires || used) throw new Error('Claim review changed or expired. Prepare again.');
+    }
     validateLocalInstructions(transaction, reviewed, owner, signers.map(signer => signer.publicKey.toBase58()));
     used = true;
     return submit(transaction, record, onSubmitted);

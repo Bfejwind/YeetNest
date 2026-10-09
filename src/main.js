@@ -29,41 +29,12 @@ const read = (key, fallback) => {
     return fallback;
   }
 };
-const seeds = [
-  ["Corporate Cat", "CCAT", "NVDAx", 1284000, 32.48, 186200, 87, "cat"],
-  ["Just a Chill Guy", "CHILL", "SOL", 842600, 18.62, 94200, 68, "chill"],
-  ["Pepe Incorporated", "PEPEINC", "SPYx", 624800, 124.8, 214500, 92, "pepe"],
-  ["Department of Degen", "DOD", "USDC", 412300, -8.24, 72800, 54, "degen"],
-  ["NASDAQ DOG", "NDOG", "QQQx", 298700, 45.12, 62400, 43, "dog"],
-  ["Overworked Wojak", "WORK", "TSLAx", 186400, 12.76, 48300, 31, "wojak"],
-  ["Infinite Money Glitch", "IMG", "SOL", 142800, 67.32, 38700, 26, "money"],
-  ["Touch Grass", "GRASS", "USDC", 98200, -3.18, 21400, 18, "grass"],
-];
-let demoCoins = read(
-  "yn-coins",
-  read(
-    "ah-tokens",
-    seeds.map((t, id) => ({
-      id,
-      name: t[0],
-      ticker: t[1],
-      pair: t[2],
-      cap: t[3],
-      change: t[4],
-      volume: t[5],
-      progress: t[6],
-      art: t[7],
-      description: "A meme with a mission. Welcome to MemePop.",
-    })),
-  ),
-);
-const demoCreator = localStorage.getItem("yn-creator") || crypto.randomUUID();
-localStorage.setItem("yn-creator", demoCreator);
-let watchlist = read("yn-watchlist", read("ah-saved", [])).map(String);
-let positions = read("yn-positions", []),
-  demoBalance = read("yn-balance", 10);
-let mode = "demo",
-  page = "Explore",
+let demoCoins = [];
+const demoCreator = '';
+let watchlist = [];
+let positions = [], demoBalance = 0;
+const mode = 'live';
+let page = "Explore",
   tab = "Trending",
   category = "All coins",
   query = "",
@@ -477,22 +448,13 @@ function bind() {
   document
     .querySelectorAll("[data-launch]")
     .forEach((b) => (b.onclick = launch));
-  document.querySelectorAll("[data-mode]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        if (mode === b.dataset.mode) return;
-        mode = b.dataset.mode;
-        watchlist = mode === 'demo' ? read('yn-watchlist', []).map(String) : [];
-        query = "";
-        tab = "Trending";
-        category = "All coins";
-        render();
-        if (mode === "live") {
-          refreshLive();
-          if (chain.publicKey) refreshHoldings();
-        }
-      }),
-  );
+  const modeControl = document.querySelector('.mode-switch');
+  if (modeControl) {
+    const liveIndicator = document.createElement('span');
+    liveIndicator.className = 'live-environment';
+    liveIndicator.textContent = 'Solana mainnet';
+    modeControl.replaceWith(liveIndicator);
+  }
   document.querySelectorAll("[data-tab]").forEach(
     (b) =>
       (b.onclick = () => {
@@ -536,7 +498,7 @@ function bind() {
   document.querySelector("#wallet").onclick = walletModal;
   document.querySelector("#help").onclick = () =>
     modal(
-      `<span class="eyebrow">HELLO, MEMEPOP</span><h2>A home for your next meme.</h2><p>Demo coins and balances stay in this browser. Live transactions use Solana mainnet and require your wallet signature. Creator image updates change the MemePop listing; the original on-chain metadata remains unchanged.</p><button class="primary full" id="see-integrations">View integrations</button>`,
+      `<span class="eyebrow">HELLO, MEMEPOP</span><h2>A home for your next meme.</h2><p>Transactions use Solana mainnet and require your wallet signature. Creator image updates change the MemePop listing; the original on-chain metadata remains unchanged.</p><button class="primary full" id="see-integrations">View integrations</button>`,
       () => {
         document.querySelector("#see-integrations").onclick = () => {
           page = "Integrations";
@@ -1323,6 +1285,7 @@ document.addEventListener("keydown", (e) => {
 });
 render();
 loadStatus();
+refreshLive();
 setInterval(() => {
   if (
     mode === "live" &&

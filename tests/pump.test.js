@@ -5,8 +5,34 @@ import { Keypair, PublicKey, TransactionMessage, VersionedTransaction, SystemPro
 import { validateLocalInstructions } from '../src/pump-validation.js';
 import { decodePumpEvents, PUMP_PROGRAM } from '../server/pump-events.js';
 import BN from 'bn.js';
-import { preparePumpLaunch, preparePumpTrade } from '../src/pump-chain.js';
+import { preparePumpLaunch, preparePumpTrade, preparePumpCreatorClaim } from '../src/pump-chain.js';
 const pump = createRequire(import.meta.url)('@pump-fun/pump-sdk');
+
+test('creator claim omits empty AMM accounts and resimulates before wallet signing', async () => {
+  const owner = Keypair.generate().publicKey;
+  const curveInstruction = await pump.PUMP_SDK.offlinePumpProgram.methods.collectCreatorFee().accountsPartial({ creator: owner }).instruction();
+  const unused = SystemProgram.transfer({ fromPubkey: owner, toPubkey: Keypair.generate().publicKey, lamports: 1 });
+  let simulations = 0, submissions = 0, failSimulation = false;
+  const context = { wallet: () => owner, pumpSdk: { ...pump, online: {
+    getCreatorVaultBalanceBothPrograms: async () => new BN(10000000), getCreatorVaultBalance: async () => new BN(10000000),
+    collectCoinCreatorFeeInstructions: async () => [curveInstruction, unused],
+  } }, connection: {
+    getLatestBlockhash: async () => ({ blockhash: Keypair.generate().publicKey.toBase58() }),
+    getFeeForMessage: async () => ({ value: 5000 }), getMinimumBalanceForRentExemption: async () => 10000000,
+    getBalance: async () => 100000000, simulateTransaction: async transaction => {
+      simulations++;
+      assert.equal(TransactionMessage.decompile(transaction.message).instructions.length, 2);
+      return { value: { err: failSimulation ? 'controlled failure' : null } };
+    },
+  }, submit: async () => { submissions++; return 'controlled-claim'; } };
+  const claim = await preparePumpCreatorClaim(context);
+  assert.equal(await claim.execute(), 'controlled-claim');
+  assert.equal(simulations, 2); assert.equal(submissions, 1);
+  const rejected = await preparePumpCreatorClaim(context);
+  failSimulation = true;
+  await assert.rejects(rejected.execute(), /No transaction was submitted/);
+  assert.equal(submissions, 1);
+});
 
 test('Pump adapter fixes buy budget/sell minimum, simulates and binds execution to the wallet', async () => {
   let owner = Keypair.generate().publicKey, submissions = 0, instructions;

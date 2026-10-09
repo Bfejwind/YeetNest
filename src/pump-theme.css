@@ -150,6 +150,7 @@
 .brand-slogan { text-align: center; color: #ffd52a; font-size: 14px; font-weight: 700; line-height: 1.5; margin: 12px 0 0; }
 .breadcrumb { min-width: 0; align-items: center; }
 .market-slogan { color: #ffd52a; font-size: 12px; line-height: 1.5; }
+.live-environment { color: #ffd52a; font-size: 10px; white-space: nowrap; }
 .brand-logo { display: block; width: 180px; max-width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: contain; border-radius: 4px; }
 .stat:nth-child(1) svg { color: #ffd52a; }
 .stat:nth-child(2) svg { color: #ff9b38; }
