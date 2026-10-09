@@ -613,7 +613,9 @@ export function createApi({
     "/api/market/:mint",
     route(async (req, res) => {
       const mint = address(req.params.mint);
-      const cached = marketCache.get(mint);
+      const embedded = req.query.chart === 'embed';
+      const cacheKey = `${mint}:${embedded ? 'embed' : 'candles'}`;
+      const cached = marketCache.get(cacheKey);
       const indexedLaunch = await chainIndex?.getLaunch(mint);
       if (indexedLaunch?.protocol === 'pump') return res.json({ ...await localChart(mint, req.query), indexed: true });
       if (cached && cached.expires > Date.now()) return res.json(cached.data);
@@ -632,6 +634,15 @@ export function createApi({
           chartError: "This token has no indexed trading pool yet.",
         });
       const poolAddress = address(pair.pairAddress);
+      if (embedded) {
+        const chartUrl = `https://www.geckoterminal.com/solana/pools/${poolAddress}`;
+        const data = { pair, candles: [], chartProvider: 'geckoterminal-embed', chartUrl,
+          embedUrl: `${chartUrl}?embed=1&info=0&swaps=0&light_chart=0&chart_type=price&resolution=5m&bg_color=1c1f26`,
+          updatedAt: Date.now(), sources: ['DexScreener', 'GeckoTerminal'] };
+        if (marketCache.size >= 100) marketCache.delete(marketCache.keys().next().value);
+        marketCache.set(cacheKey, { data, expires: Date.now() + 300000 });
+        return res.json(data);
+      }
       let candles = [],
         chartError = "";
       try {
@@ -656,7 +667,7 @@ export function createApi({
       };
       if (marketCache.size >= 100)
         marketCache.delete(marketCache.keys().next().value);
-      marketCache.set(mint, { data, expires: Date.now() + 60000 });
+      marketCache.set(cacheKey, { data, expires: Date.now() + 60000 });
       res.json(data);
     }),
   );

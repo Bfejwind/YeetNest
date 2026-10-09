@@ -1,6 +1,30 @@
 import { test, expect } from '@playwright/test';
 import { Keypair } from '@solana/web3.js';
 
+test('external pools use an embedded chart with fallback links and stable responsive sizing', async ({ page }) => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  await page.route('**/api/status', route => route.fulfill({ json: { network: 'mainnet-beta' } }));
+  await page.route('**/api/tokens*', route => route.fulfill({ json: [{ id: mint, name: 'External Test', symbol: 'EXT', decimals: 6, usdPrice: 1 }] }));
+  await page.route('**/api/launches*', route => route.fulfill({ json: [] }));
+  await page.route('**/api/market/*', route => {
+    expect(new URL(route.request().url()).searchParams.get('chart')).toBe('embed');
+    return route.fulfill({ json: { chartProvider: 'geckoterminal-embed', pair: { pairAddress: mint, priceUsd: '1', dexId: 'meteora' }, candles: [] } });
+  });
+  await page.route('https://www.geckoterminal.com/**', route => route.fulfill({ contentType: 'text/html', body: '<body style="background:#1c1f26;color:white">Provider chart fixture</body>' }));
+  await page.goto('/');
+  await page.locator('.coin').first().click();
+  const frame = page.locator('.external-token-chart');
+  await expect(frame).toBeVisible();
+  await expect(frame).toHaveAttribute('src', /chart_type=price&resolution=5m/);
+  await expect(page.getByRole('link', { name: 'Open on GeckoTerminal' })).toBeVisible();
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect((await frame.boundingBox()).height).toBe(460);
+    await page.screenshot({ path: `memepop-embed-${width}.png` });
+  }
+});
+
 test('Pump chart uses local candles after graduation with USD, FDV and range controls', async ({ page }) => {
   const mint = Keypair.generate().publicKey.toBase58();
   await page.route('**/api/status', route => route.fulfill({ json: { network: 'mainnet-beta' } }));

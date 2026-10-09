@@ -16,6 +16,14 @@ The token view supports timeframe, history, SOL/USD and Price/FDV selection, can
 
 ## Render Rollout
 
+### Low-Cost External Charts
+
+Non-Pump pool charts now use GeckoTerminal's official embedded viewer, defaulting to price and five-minute candles. `/api/market/:mint?chart=embed` discovers the highest-liquidity eligible base-token pool through DexScreener, caches its descriptor for five minutes per process, and does not request GeckoTerminal OHLCV through our backend. Pump charts remain local. The original API candle route remains available without `chart=embed`.
+
+No new API key, subscription, worker or migration is required for embeds. Deploy the web changes with `npm ci && npm run build`, then restart the web service. Existing Pump worker, database and RPC costs still apply. Embedded charts load from a third-party origin and expose ordinary visitor connection information to that provider. Browser blockers, provider outages and untracked pools can prevent rendering; direct GeckoTerminal and DexScreener links remain visible. Cross-origin restrictions prevent MemePop from verifying the chart's internal contents. An iframe load event is not proof of available price history. The viewer controls its history range and timezone; this is not a Singapore-midnight-only chart or guaranteed all-token coverage. No synthetic price history is generated.
+
+Official embed instructions: https://about.geckoterminal.com/embed-charts
+
 1. Back up PostgreSQL. Review and push the changes. No wallet credentials belong in Git.
 2. Web build: `npm ci && npm run build`. Paid pre-deploy: `npm run db:migrate`; start `npm start`. If pre-deploy is unavailable, start `npm run db:migrate && npm start`.
 3. Apply migrations through **013** before starting either service. Local configured-database migration was applied; this does not prove another Render database has been updated.

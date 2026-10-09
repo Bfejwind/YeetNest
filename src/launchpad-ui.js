@@ -342,13 +342,25 @@ export async function mountMarket(coin, { esc }) {
     let curve = Boolean(coin.poolId && coin.launchStatus !== 'Graduated');
     let indexed = coin.protocol === 'pump';
     const preferences = { interval: root.dataset.interval || '60', days: root.dataset.days || '1', currency: root.dataset.currency || 'SOL', metric: root.dataset.metric || 'price' };
-    const result = await chain.api(`${indexed ? '/candles/' : curve ? '/curve/' : '/market/'}${coin.mint}?${new URLSearchParams(preferences)}`);
+    const query = new URLSearchParams(preferences);
+    if (!indexed && !curve) query.set('chart', 'embed');
+    const result = await chain.api(`${indexed ? '/candles/' : curve ? '/curve/' : '/market/'}${coin.mint}?${query}`);
     indexed ||= Boolean(result.indexed);
     curve ||= indexed;
     if (!root.isConnected || cancelled) return;
     const pair = result.pair;
     if (!curve && !pair) {
       root.innerHTML = `<p class="fine">${esc(result.chartError)}</p>`;
+      return;
+    }
+    if (!curve && result.chartProvider === 'geckoterminal-embed') {
+      cleanupUpdates();
+      const pool = String(pair.pairAddress);
+      if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(pool)) throw new Error('Invalid chart pool address.');
+      const chartUrl = `https://www.geckoterminal.com/solana/pools/${pool}`;
+      const embedUrl = `${chartUrl}?embed=1&info=0&swaps=0&light_chart=0&chart_type=price&resolution=5m&bg_color=1c1f26`;
+      root.innerHTML = `<div class="pool-metrics"><span>Price<b>${dollars(Number(pair.priceUsd))}</b></span><span>Liquidity<b>${dollars(pair.liquidity?.usd)}</b></span><span>24h trades<b>${(pair.txns?.h24?.buys || 0) + (pair.txns?.h24?.sells || 0)}</b></span></div><div class="chart-header"><b>Price chart</b><span>${esc(pair.dexId)} / GeckoTerminal</span></div><iframe class="external-token-chart" title="${esc(coin.name || 'Token')} price chart" src="${esc(embedUrl)}" loading="lazy" referrerpolicy="no-referrer" allow="fullscreen" allowfullscreen></iframe><p class="fine">If the chart is unavailable, this pool may not be tracked by GeckoTerminal.</p><a class="source-link" href="${esc(chartUrl)}" target="_blank" rel="noopener noreferrer">Open on GeckoTerminal ${icon('external-link')}</a><a class="source-link" href="https://dexscreener.com/solana/${esc(pool)}" target="_blank" rel="noopener noreferrer">Pool on DexScreener ${icon('external-link')}</a>`;
+      createIcons({ icons });
       return;
     }
     root.innerHTML = curve

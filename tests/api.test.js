@@ -21,6 +21,27 @@ async function withApi(fetcher, callback, config = {}) {
 }
 const ok = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 
+test('embedded charts discover and cache a pool without requesting historical candles', async () => {
+  const mint = Keypair.generate().publicKey.toBase58(), pool = Keypair.generate().publicKey.toBase58();
+  let calls = 0;
+  await withApi(async url => {
+    assert.match(String(url), /api\.dexscreener\.com\/token-pairs/);
+    calls++;
+    return ok([{ chainId: 'solana', baseToken: { address: mint }, pairAddress: pool, liquidity: { usd: 10 } }]);
+  }, async request => {
+    for (let i = 0; i < 2; i++) {
+      const response = await request(`/market/${mint}?chart=embed`);
+      assert.equal(response.status, 200);
+      const result = await response.json();
+      assert.equal(result.chartProvider, 'geckoterminal-embed');
+      assert.deepEqual(result.candles, []);
+      assert.equal(new URL(result.embedUrl).hostname, 'www.geckoterminal.com');
+      assert.equal(new URL(result.embedUrl).searchParams.get('chart_type'), 'price');
+    }
+    assert.equal(calls, 1);
+  });
+});
+
 test('local candle API validates controls and never requests an external chart when no index exists', async () => {
   const mint = Keypair.generate().publicKey.toBase58();
   await withApi(async () => { assert.fail('External provider requested for local candles'); }, async request => {
