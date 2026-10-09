@@ -339,12 +339,18 @@ export async function mountMarket(coin, { esc }) {
   root.innerHTML =
     '<div class="market-loading">Loading live pool data...</div>';
   try {
-    let curve = Boolean(coin.poolId && coin.launchStatus !== 'Graduated');
-    let indexed = coin.protocol === 'pump';
+    let curve = !coin.externalChart && Boolean(coin.poolId && coin.launchStatus !== 'Graduated');
+    let indexed = !coin.externalChart && coin.protocol === 'pump';
     const preferences = { interval: root.dataset.interval || '60', days: root.dataset.days || '1', currency: root.dataset.currency || 'SOL', metric: root.dataset.metric || 'price' };
     const query = new URLSearchParams(preferences);
     if (!indexed && !curve) query.set('chart', 'embed');
-    const result = await chain.api(`${indexed ? '/candles/' : curve ? '/curve/' : '/market/'}${coin.mint}?${query}`);
+    let result;
+    try {
+      result = await chain.api(`${indexed ? '/candles/' : curve ? '/curve/' : '/market/'}${coin.mint}?${query}`);
+    } catch (error) {
+      if (indexed || curve) throw error;
+      result = { chartProvider: 'geckoterminal-embed', chartLookup: 'token', pair: { pairAddress: coin.mint, dexId: 'Token history' } };
+    }
     indexed ||= Boolean(result.indexed);
     curve ||= indexed;
     if (!root.isConnected || cancelled) return;
@@ -361,6 +367,10 @@ export async function mountMarket(coin, { esc }) {
       const embedUrl = `${chartUrl}?embed=1&info=0&swaps=0&light_chart=0&chart_type=price&resolution=5m&bg_color=1c1f26`;
       root.innerHTML = `<div class="pool-metrics"><span>Price<b>${dollars(Number(pair.priceUsd))}</b></span><span>Liquidity<b>${dollars(pair.liquidity?.usd)}</b></span><span>24h trades<b>${(pair.txns?.h24?.buys || 0) + (pair.txns?.h24?.sells || 0)}</b></span></div><div class="chart-header"><b>Price chart</b><span>${esc(pair.dexId)} / GeckoTerminal</span></div><iframe class="external-token-chart" title="${esc(coin.name || 'Token')} price chart" src="${esc(embedUrl)}" loading="lazy" referrerpolicy="no-referrer" allow="fullscreen" allowfullscreen></iframe><p class="fine">If the chart is unavailable, this pool may not be tracked by GeckoTerminal.</p><a class="source-link" href="${esc(chartUrl)}" target="_blank" rel="noopener noreferrer">Open on GeckoTerminal ${icon('external-link')}</a><a class="source-link" href="https://dexscreener.com/solana/${esc(pool)}" target="_blank" rel="noopener noreferrer">Pool on DexScreener ${icon('external-link')}</a>`;
       createIcons({ icons });
+      if (result.chartLookup === 'token') {
+        root.querySelector('.pool-metrics')?.remove();
+        root.querySelector('.source-link:last-child').firstChild.textContent = 'Token on DexScreener ';
+      }
       return;
     }
     root.innerHTML = curve
@@ -376,6 +386,8 @@ export async function mountMarket(coin, { esc }) {
       if (!result.candles?.length) {
         root.querySelector('.fine')?.remove();
         const note = document.createElement('p'); note.className = 'fine'; note.textContent = preferences.currency === 'USD' ? 'No indexed trades with recorded USD rates in this range. Switch to SOL.' : 'No trades indexed in this range yet. Check worker progress.'; root.append(note);
+        const fallback = document.createElement('button'); fallback.type = 'button'; fallback.className = 'source-link'; fallback.textContent = 'View provider chart';
+        fallback.onclick = () => mountMarket({ ...coin, externalChart: true }, { esc }); root.append(fallback);
       }
       const options = document.createElement('div'); options.className = 'candle-options';
       options.innerHTML = `<label>Currency<select aria-label="Chart currency"><option>SOL</option><option>USD</option></select></label><label>View<select aria-label="Chart metric"><option value="price">Price</option><option value="fdv">FDV</option></select></label><label>History<select aria-label="Chart history"><option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></label>`;
@@ -502,7 +514,10 @@ export async function mountMarket(coin, { esc }) {
       disposeChart = () => {};
     };
   } catch (error) {
-    if (root.isConnected)
+    if (root.isConnected && !cancelled) {
       root.innerHTML = `<p class="fine">${esc(error.message)}</p>`;
+      const fallback = document.createElement('button'); fallback.type = 'button'; fallback.className = 'source-link'; fallback.textContent = 'View provider chart';
+      fallback.onclick = () => mountMarket({ ...coin, externalChart: true }, { esc }); root.append(fallback);
+    }
   }
 }

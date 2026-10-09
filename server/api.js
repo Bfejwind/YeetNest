@@ -617,18 +617,24 @@ export function createApi({
       const cacheKey = `${mint}:${embedded ? 'embed' : 'candles'}`;
       const cached = marketCache.get(cacheKey);
       const indexedLaunch = await chainIndex?.getLaunch(mint);
-      if (indexedLaunch?.protocol === 'pump') return res.json({ ...await localChart(mint, req.query), indexed: true });
+      if (!embedded && indexedLaunch?.protocol === 'pump') return res.json({ ...await localChart(mint, req.query), indexed: true });
       if (cached && cached.expires > Date.now()) return res.json(cached.data);
-      const pairs = await upstream(
-        `https://api.dexscreener.com/token-pairs/v1/solana/${mint}`,
-      );
+      const tokenChart = () => ({ pair: { pairAddress: mint, dexId: 'Token history' }, candles: [],
+        chartProvider: 'geckoterminal-embed', chartLookup: 'token', updatedAt: Date.now(), sources: ['GeckoTerminal'] });
+      let pairs;
+      try {
+        pairs = await upstream(`https://api.dexscreener.com/token-pairs/v1/solana/${mint}`);
+      } catch (error) {
+        if (embedded) return res.json(tokenChart());
+        throw error;
+      }
       if (!Array.isArray(pairs))
-        throw fail("Market provider returned an invalid response.", 502);
+        return embedded ? res.json(tokenChart()) : res.status(502).json({ error: 'Market provider returned an invalid response.' });
       const pair = pairs
         .filter((p) => p.baseToken?.address === mint && p.chainId === "solana")
         .sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0))[0];
       if (!pair)
-        return res.json({
+        return res.json(embedded ? tokenChart() : {
           pair: null,
           candles: [],
           chartError: "This token has no indexed trading pool yet.",

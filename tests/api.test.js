@@ -21,6 +21,20 @@ async function withApi(fetcher, callback, config = {}) {
 }
 const ok = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 
+test('embedded chart remains available when discovery is rate limited or has no pool', async () => {
+  for (const status of [429, 200]) {
+    const mint = Keypair.generate().publicKey.toBase58();
+    await withApi(async () => status === 429 ? new Response('{}', { status }) : ok([]), async request => {
+      const response = await request(`/market/${mint}?chart=embed`);
+      assert.equal(response.status, 200);
+      const data = await response.json();
+      assert.equal(data.chartLookup, 'token');
+      assert.equal(data.pair.pairAddress, mint);
+      assert.equal(data.chartProvider, 'geckoterminal-embed');
+    });
+  }
+});
+
 test('embedded charts discover and cache a pool without requesting historical candles', async () => {
   const mint = Keypair.generate().publicKey.toBase58(), pool = Keypair.generate().publicKey.toBase58();
   let calls = 0;

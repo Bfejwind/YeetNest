@@ -1,6 +1,19 @@
 import { test, expect } from '@playwright/test';
 import { Keypair } from '@solana/web3.js';
 
+test('rate limited market lookup does not block opening a token chart', async ({ page }) => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  await page.route('**/api/status', route => route.fulfill({ json: { network: 'mainnet-beta' } }));
+  await page.route('**/api/tokens*', route => route.fulfill({ json: [{ id: mint, name: 'Rate Test', symbol: 'RATE', decimals: 6, usdPrice: 1 }] }));
+  await page.route('**/api/launches*', route => route.fulfill({ json: [] }));
+  await page.route('**/api/market/*', route => route.fulfill({ status: 429, json: { error: 'Chart provider rate limit reached.' } }));
+  await page.route('https://www.geckoterminal.com/**', route => route.fulfill({ contentType: 'text/html', body: '<body>Token chart fallback fixture</body>' }));
+  await page.goto('/'); await page.locator('.coin').first().click();
+  await expect(page.locator('.external-token-chart')).toBeVisible();
+  await expect(page.locator('.external-token-chart')).toHaveAttribute('src', new RegExp(`/solana/pools/${mint}\\?embed=1`));
+  await expect(page.locator('#live-market .pool-metrics')).toHaveCount(0);
+});
+
 test('external pools use an embedded chart with fallback links and stable responsive sizing', async ({ page }) => {
   const mint = Keypair.generate().publicKey.toBase58();
   await page.route('**/api/status', route => route.fulfill({ json: { network: 'mainnet-beta' } }));
