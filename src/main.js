@@ -654,6 +654,10 @@ async function refreshHoldings() {
       return;
     solBalance = result.sol;
     liveHoldings = result.tokens;
+    const balanceNode = document.querySelector('#live-sol-balance');
+    if (balanceNode) balanceNode.textContent = `${solBalance.toFixed(6)} SOL`;
+    const balanceError = document.querySelector('#wallet-balance-error');
+    if (balanceError) balanceError.textContent = result.tokensUnavailable ? 'Some token balances are unavailable. SOL balance is current.' : '';
     for (const holding of liveHoldings)
       if (!liveCoins.some((c) => c.mint === holding.mint))
         liveCoins.push({
@@ -672,6 +676,10 @@ async function refreshHoldings() {
     if (walletEpoch === epoch) {
       solBalance = null;
       liveHoldings = [];
+      const balanceNode = document.querySelector('#live-sol-balance');
+      if (balanceNode) balanceNode.textContent = '-- SOL';
+      const balanceError = document.querySelector('#wallet-balance-error');
+      if (balanceError) balanceError.textContent = e.message;
       toast(`Balance unavailable: ${e.message}`);
     }
   }
@@ -705,8 +713,17 @@ function inlineError(error) {
 function walletModal() {
   if (connected()) {
     modal(
-      `<span class="eyebrow">${mode === "demo" ? "DEMO WALLET" : "LIVE WALLET"}</span><h2>Your portfolio.</h2><p class="address">${mode === "demo" ? "Local demo wallet" : esc(chain.publicKey.toBase58())}</p>${mode === "live" ? `<div class="wallet-balance">${solBalance == null ? "--" : solBalance.toFixed(4)} <span>SOL</span></div>` : ""}<button class="secondary full" id="disconnect">Disconnect</button>`,
+      `<span class="eyebrow">${mode === "demo" ? "DEMO WALLET" : "LIVE WALLET"}</span><h2>Your portfolio.</h2><p class="address">${mode === "demo" ? "Local demo wallet" : esc(chain.publicKey.toBase58())}</p>${mode === "live" ? `<div class="wallet-balance" id="live-sol-balance">${solBalance == null ? "Loading..." : `${solBalance.toFixed(6)} SOL`}</div><p class="form-error" id="wallet-balance-error" role="status"></p><button class="secondary full" id="refresh-wallet-balance">${I('refresh-cw')} Refresh balance</button>` : ""}<button class="secondary full" id="disconnect">Disconnect</button>`,
       () => {
+        const refresh = document.querySelector('#refresh-wallet-balance');
+        if (refresh) {
+          const update = async () => {
+            refresh.disabled = true;
+            try { await refreshHoldings(); } finally { if (refresh.isConnected) refresh.disabled = false; }
+          };
+          refresh.onclick = update;
+          update();
+        }
         document.querySelector("#disconnect").onclick = async () => {
           if (mode === "demo") demoWallet = false;
           else {

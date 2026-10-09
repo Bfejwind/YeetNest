@@ -7,6 +7,31 @@ test.afterEach(async ({ page }) => {
   await page.unrouteAll({ behavior: 'wait' });
 });
 
+test('SOL remains visible when token RPC fails and wallet refresh loads a changed balance', async ({ page }) => {
+  const address = Keypair.generate().publicKey.toBase58();
+  await page.addInitScript(address => {
+    window.phantom = { solana: { connect: async () => ({ publicKey: { toString: () => address } }), on: () => {} } };
+  }, address);
+  await page.route('**/api/tokens*', route => route.fulfill({ json: [] }));
+  let lamports = 123456789;
+  await page.route('**/api/rpc', route => {
+    const { id, method } = route.request().postDataJSON();
+    return route.fulfill({ json: method === 'getBalance' ? { jsonrpc: '2.0', id, result: { context: { slot: 1 }, value: lamports } } : { jsonrpc: '2.0', id, error: { code: -32000, message: 'Token endpoint unavailable' } } });
+  });
+  await page.goto('/');
+  await page.locator('[data-mode="live"]').click();
+  await page.locator('#wallet').click();
+  await page.locator('[data-wallet="Phantom"]').click();
+  await expect(page.locator('[data-wallet="Phantom"]')).toHaveCount(0);
+  await page.locator('#wallet').click();
+  await expect(page.locator('#live-sol-balance')).toHaveText('0.123457 SOL');
+  await expect(page.locator('#wallet-balance-error')).toContainText('Some token balances');
+  await expect(page.locator('#refresh-wallet-balance')).toBeEnabled();
+  lamports = 200000000;
+  await page.locator('#refresh-wallet-balance').click();
+  await expect(page.locator('#live-sol-balance')).toHaveText('0.200000 SOL');
+});
+
 test('stalled Phantom connection times out, ignores late approval and allows retry', async ({ page }) => {
   const address = Keypair.generate().publicKey.toBase58();
   await page.addInitScript(address => {

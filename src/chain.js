@@ -122,7 +122,7 @@ export async function authenticate() {
 
 export async function balances() {
   if (!publicKey) return { sol: null, tokens: [] };
-  const [sol, spl, token2022] = await Promise.all([
+  const [sol, spl, token2022] = await Promise.allSettled([
     connection.getBalance(publicKey),
     connection.getParsedTokenAccountsByOwner(publicKey, {
       programId: new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
@@ -131,8 +131,10 @@ export async function balances() {
       programId: new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"),
     }),
   ]);
+  if (sol.status === 'rejected') throw new Error('SOL balance RPC request failed. Retry or check the server RPC connection.');
+  const tokenErrors = [spl, token2022].filter(result => result.status === 'rejected');
   const merged = new Map();
-  for (const account of [...spl.value, ...token2022.value]) {
+  for (const account of [spl, token2022].flatMap(result => result.status === 'fulfilled' ? result.value.value : [])) {
     const { mint, tokenAmount } = account.account.data.parsed.info;
     if (BigInt(tokenAmount.amount) === 0n) continue;
     const prior = merged.get(mint);
@@ -144,7 +146,7 @@ export async function balances() {
       decimals: tokenAmount.decimals,
     });
   }
-  return { sol: sol / 1e9, tokens: [...merged.values()] };
+  return { sol: sol.value / 1e9, tokens: [...merged.values()], tokensUnavailable: tokenErrors.length > 0 };
 }
 
 async function assertMainnet() {
