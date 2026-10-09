@@ -173,8 +173,9 @@
   .brand { width: 126px; flex-shrink: 0; justify-content: flex-start; }
   .brand-logo { width: 126px; }
   .brand-slogan { flex: 1; min-width: 0; margin: 0; font-size: 16px; text-wrap: balance; }
-  header { height: auto; min-height: 62px; gap: 12px; padding-top: 12px; padding-bottom: 12px; flex-wrap: wrap; }
-  .breadcrumb { flex: 1 1 100%; justify-content: center; }
-  .market-slogan { font-size: 11px; }
-  .header-right { margin-left: auto; }
+  header { height: auto; min-height: 62px; gap: 12px; padding-top: 12px; padding-bottom: 12px; flex-wrap: nowrap; }
+  .breadcrumb { flex: 1 1 0; justify-content: flex-start; }
+  .market-slogan { font-size: 11px; text-wrap: balance; }
+  .header-right { margin-left: auto; flex-shrink: 0; }
+  .live-environment { max-width: 44px; white-space: normal; text-align: center; line-height: 1.4; }
 }
