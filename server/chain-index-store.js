@@ -6,7 +6,7 @@ export function createChainIndexStore(databaseUrl) {
   const pool = new pg.Pool({ ...databaseConfig(databaseUrl), max: 4, idleTimeoutMillis: 30000 });
   pool.on('error', () => console.error('Chain index database connection error.'));
   return {
-    ready: async () => { await pool.query('SELECT pool,protocol,progress FROM indexed_launches LIMIT 0'); await pool.query('SELECT signature FROM indexed_trades LIMIT 0'); await pool.query('SELECT id FROM market_events LIMIT 0'); },
+    ready: async () => { await pool.query('SELECT pool,protocol,progress FROM indexed_launches LIMIT 0'); await pool.query('SELECT signature,venue FROM indexed_trades LIMIT 0'); await pool.query('SELECT mint FROM chart_candles LIMIT 0'); await pool.query('SELECT id FROM market_events LIMIT 0'); },
     close: () => pool.end(),
     latestEvent: async () => Number((await pool.query('SELECT COALESCE(max(id),0) AS id FROM market_events')).rows[0].id),
     eventsAfter: async id => (await pool.query('SELECT id,mint FROM market_events WHERE id>$1 ORDER BY id LIMIT 100', [id])).rows,
@@ -35,8 +35,25 @@ export function createChainIndexStore(databaseUrl) {
       return result.rows;
     },
     saveTrade: async trade => {
-      await pool.query(`INSERT INTO indexed_trades(signature,event_index,pool,slot,block_time,side,base_amount,quote_amount,fee_amount)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(signature,event_index) DO NOTHING`, [trade.signature, trade.index, trade.pool, trade.slot, trade.blockTime, trade.side, trade.base, trade.quote, trade.fees]);
+      await pool.query(`WITH event_lock AS MATERIALIZED (SELECT pg_advisory_xact_lock(741923)), changed AS (
+        INSERT INTO indexed_trades(signature,event_index,pool,slot,block_time,side,base_amount,quote_amount,fee_amount,venue)
+        SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10 FROM event_lock ON CONFLICT(signature,event_index) DO NOTHING RETURNING pool)
+        INSERT INTO market_events(mint,created) SELECT l.mint,$11 FROM changed JOIN indexed_launches l ON l.pool=changed.pool`, [trade.signature, trade.index, trade.pool, trade.slot, trade.blockTime, trade.side, trade.base, trade.quote, trade.fees, trade.venue || 'curve', Date.now()]);
+    },
+    saveExchangeRate: async ({ time, usd, source }) => pool.query('INSERT INTO chart_exchange_rates(time,usd,source,observed) VALUES($1,$2,$3,$4) ON CONFLICT(time) DO NOTHING', [time, usd, source, Date.now()]),
+    chart: async (mint, { interval = 60, since = Math.floor(Date.now() / 1000) - 86400, before = Math.floor(Date.now() / 1000) + 60, currency = 'SOL', metric = 'price' } = {}) => {
+      const launch = (await pool.query('SELECT supply,decimals,protocol FROM indexed_launches WHERE mint=$1', [mint])).rows[0];
+      if (!launch) return { candles: [], available: false };
+      const multiplier = metric === 'fdv' && launch.protocol === 'pump' ? Number(launch.supply) / 10 ** launch.decimals : 1;
+      if (metric === 'fdv' && launch.protocol !== 'pump') throw new Error('FDV requires an indexed Pump supply.');
+      const rows = (await pool.query(`WITH priced AS (
+        SELECT c.*,floor(c.time/$2)*$2 AS bucket,CASE WHEN $5='USD' THEN r.usd ELSE 1 END AS fx
+        FROM chart_candles c LEFT JOIN chart_exchange_rates r ON r.time=c.time
+        WHERE c.mint=$1 AND c.time>=$3 AND c.time<$4
+      ) SELECT bucket AS time,(array_agg(open*fx ORDER BY time))[1] AS open,max(high*fx) AS high,min(low*fx) AS low,
+        (array_agg(close*fx ORDER BY time DESC))[1] AS close,sum(volume*fx) AS volume,sum(trades) AS trades
+        FROM priced WHERE fx IS NOT NULL GROUP BY bucket ORDER BY bucket DESC LIMIT 1500`, [mint, interval, since, before, currency])).rows.reverse();
+      return { available: true, candles: rows.map(row => [Number(row.time), Number(row.open) * multiplier, Number(row.high) * multiplier, Number(row.low) * multiplier, Number(row.close) * multiplier, Number(row.volume)]), currency, metric, interval, source: 'Finalized Pump/PumpSwap indexed execution prices', scope: 'Indexed trades only; no gap filling. Same-slot ordering is deterministic, not block transaction order.', conversion: currency === 'USD' ? 'Observed Coinbase SOL/USD minute snapshots; minutes without rates are excluded. Not tick-exact historical FX.' : null, updatedAt: Date.now() };
     },
     trades: async (mint, limit = 100) => (await pool.query(`SELECT t.*,l.decimals FROM indexed_trades t JOIN indexed_launches l ON l.pool=t.pool
       WHERE l.mint=$1 ORDER BY t.slot DESC,t.event_index DESC LIMIT $2`, [mint, limit])).rows,

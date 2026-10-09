@@ -256,7 +256,6 @@ function render() {
         toast("Online demo only. The mainnet backend is not deployed yet.");
         return;
       }
-      mode = "live";
       render();
       refreshLive();
     },

@@ -1,0 +1,31 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { Keypair } from '@solana/web3.js';
+import BN from 'bn.js';
+import bs58 from 'bs58';
+import { decodePumpSwapEvents, PUMPSWAP_PROGRAM } from '../server/pumpswap-indexer.js';
+import { createRateSampler } from '../server/chart-rates.js';
+const amm = createRequire(import.meta.url)('@pump-fun/pump-swap-sdk');
+test('PumpSwap decoding covers current and historical events and rejects spoofed emitters', () => {
+  const idl = amm.OFFLINE_PUMP_AMM_PROGRAM.idl;
+  const type = idl.types.find(type => type.name === 'buyEvent');
+  const data = Object.fromEntries(type.type.fields.map(field => [field.name, field.type === 'pubkey' ? Keypair.generate().publicKey : field.type === 'bool' ? false : field.type === 'string' ? 'buy' : new BN(1)]));
+  const bytes = Buffer.concat([Buffer.from(idl.events.find(event => event.name === 'buyEvent').discriminator), amm.OFFLINE_PUMP_AMM_PROGRAM.coder.types.encode('buyEvent', data)]);
+  const transaction = { transaction: { message: { accountKeys: [amm.PUMP_AMM_PROGRAM_ID] } }, meta: { err: null, innerInstructions: [{ index: 1, instructions: [{ programIdIndex: 0, data: bs58.encode(Buffer.concat([Buffer.from([228,69,165,46,81,203,154,29]), bytes])) }] }] } };
+  assert.equal(decodePumpSwapEvents(transaction)[0].data.baseAmountOut.toString(), '1');
+  transaction.meta.innerInstructions = [];
+  transaction.meta.logMessages = [`Program ${PUMPSWAP_PROGRAM} invoke [1]`, `Program data: ${bytes.subarray(0,360).toString('base64')}`, `Program ${PUMPSWAP_PROGRAM} success`];
+  assert.equal(decodePumpSwapEvents(transaction).length, 1);
+  transaction.meta.logMessages.splice(1, 0, 'Program 11111111111111111111111111111111 invoke [2]');
+  assert.equal(decodePumpSwapEvents(transaction).length, 0);
+  transaction.meta.err = 'failed'; assert.deepEqual(decodePumpSwapEvents(transaction), []);
+});
+test('USD sampling validates rates and limits requests to one per minute', async () => {
+  let time = 100000, calls = 0; const saved = [];
+  const sample = createRateSampler({ saveExchangeRate: async row => saved.push(row) }, { now: () => time, fetcher: async () => { calls++; return new Response(JSON.stringify({ data: { currency: 'USD', amount: '100.25' } })); } });
+  await sample(); await sample(); assert.equal(calls, 1); assert.equal(saved[0].time, 60);
+  time += 60000; await sample(); assert.equal(calls, 2);
+  const invalid = createRateSampler({ saveExchangeRate: () => assert.fail('Bad rate saved') }, { now: () => time, fetcher: async () => new Response(JSON.stringify({ data: { currency: 'SOL', amount: '-1' } })) });
+  await assert.rejects(invalid(), /Invalid/);
+});

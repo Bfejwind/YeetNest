@@ -1,5 +1,7 @@
 # MemePop Implementation Status
 
+Chart update (October 9): `CHART_SYSTEM.md` supersedes the chart/indexing limitations below. The worker now scans canonical SOL PumpSwap trades, migration 013 stores one-minute OHLCV, and Pump token charts use local history after graduation. USD uses observed minute rates (no retroactive FX invention); FDV uses issued supply. Archive completeness, exact same-slot ordering, shared multi-replica quotas and capacity certification remain unverified. Latest chart checks: 49 unit/API tests, 8 PostgreSQL tests, 3 live-only browser tests, a bounded worker cycle and read-only PumpSwap verification. Historical demo-mode UI tests are not the live-only acceptance suite.
+
 October 9, 2026. Local implementation and verification, not deployment or production readiness. At the user's request, new launches now use Pump and graduated trades use canonical PumpSwap pools. Existing Raydium/Jupiter coins and recovery records remain supported. See `PUMP_ROLLOUT.md` before deploying this protocol change.
 
 ## Completed Code

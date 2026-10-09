@@ -95,6 +95,18 @@ export function createApi({
   app.locals.close = () => { marketFeed?.close(); return Promise.all([community.close(), persisted.close(), catalogue.close(), security.close(), chainIndex?.close(), indexQueue?.close()]); };
   const limits = new Map();
   const marketCache = new Map();
+  const candleCache = new Map();
+  const localChart = async (mint, query = {}) => {
+    const interval = Number(query.interval || 60), days = Number(query.days || 1);
+    const currency = query.currency || 'SOL', metric = query.metric || 'price';
+    if (![60, 300, 900, 3600, 14400, 86400].includes(interval) || ![1, 7, 30, 90].includes(days) || !['SOL', 'USD'].includes(currency) || !['price', 'fdv'].includes(metric)) throw fail('Invalid chart interval, range, currency or metric.');
+    const key = JSON.stringify([mint, interval, days, currency, metric]);
+    if (candleCache.get(key)?.expires > Date.now()) return candleCache.get(key).data;
+    const data = chainIndex ? await chainIndex.chart(mint, { interval, since: Math.floor(Date.now() / 1000) - days * 86400, currency, metric }) : { candles: [], available: false };
+    if (candleCache.size >= 100) candleCache.delete(candleCache.keys().next().value);
+    candleCache.set(key, { data, expires: Date.now() + 2000 });
+    return data;
+  };
   const images = new Map();
   const imageHosts = new Set([
     "ipfs.io",
@@ -602,6 +614,8 @@ export function createApi({
     route(async (req, res) => {
       const mint = address(req.params.mint);
       const cached = marketCache.get(mint);
+      const indexedLaunch = await chainIndex?.getLaunch(mint);
+      if (indexedLaunch?.protocol === 'pump') return res.json({ ...await localChart(mint, req.query), indexed: true });
       if (cached && cached.expires > Date.now()) return res.json(cached.data);
       const pairs = await upstream(
         `https://api.dexscreener.com/token-pairs/v1/solana/${mint}`,
@@ -670,8 +684,9 @@ export function createApi({
   }));
   app.get('/api/indexer/status', route(async (req, res) => {
     const state = (await persisted.get(checkpoint))[0];
+    const swapState = indexProtocol === 'pump' ? (await persisted.get('pumpswap-indexer'))[0] : null;
     const jobs = await queueMetrics();
-    res.json({ enabled: Boolean(indexQueue), historyScope: indexProtocol, scannedAt: state?.updatedAt || null, scanError: state?.error || null, scanBackfillComplete: Boolean(state?.backfillComplete), jobs, historyComplete: Boolean(state?.backfillComplete && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
+    res.json({ enabled: Boolean(indexQueue), historyScope: indexProtocol === 'pump' ? 'pump-and-pumpswap' : indexProtocol, scannedAt: state?.updatedAt || null, scanError: state?.error || null, scanBackfillComplete: Boolean(state?.backfillComplete), pumpSwap: swapState || null, jobs, historyComplete: Boolean(state?.backfillComplete && (indexProtocol !== 'pump' || swapState?.backfillComplete) && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
   }));
   app.get('/api/launches/indexed', route(async (req, res) => {
     const offset = Number(req.query.offset || 0), limit = Number(req.query.limit || 24);
@@ -686,6 +701,7 @@ export function createApi({
     const nextCursor = hasMore ? encodeCursor(rows.at(-1), query, status) : null;
     const registered = new Map((await catalogue.find(rows.map(row => row.mint))).map(coin => [coin.mint, coin]));
     const state = (await persisted.get(checkpoint))[0];
+    const swapState = indexProtocol === 'pump' ? (await persisted.get('pumpswap-indexer'))[0] : null;
     const jobs = await queueMetrics();
     res.json({ coins: rows.map(row => ({
       ...registered.get(row.mint), id: row.mint, mint: row.mint, poolId: row.pool, protocol: row.protocol, creator: row.creator,
@@ -697,13 +713,14 @@ export function createApi({
       raised: row.raised, target: row.target, supplyRaw: row.supply, created: row.created === null ? null : Number(row.created), updatedAt: Number(row.updated), slot: Number(row.slot),
     })), available: true, hasMore, nextCursor, offset, indexProtocol, indexedAt: state?.updatedAt || null,
       indexerError: jobs?.failed ? 'INDEXING_JOBS_FAILED' : state?.error || null, jobs,
-      historyScope: indexProtocol, historyComplete: Boolean(state?.backfillComplete && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
+      historyScope: indexProtocol === 'pump' ? 'pump-and-pumpswap' : indexProtocol, historyComplete: Boolean(state?.backfillComplete && (indexProtocol !== 'pump' || swapState?.backfillComplete) && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
   }));
+  app.get('/api/candles/:mint', route(async (req, res) => res.json(await localChart(address(req.params.mint), req.query))));
   app.get('/api/curve/:mint', route(async (req, res) => {
     const mint = address(req.params.mint);
     if (!chainIndex) return res.json({ candles: [], available: false });
     const [launch, candles] = await Promise.all([chainIndex.getLaunch(mint), chainIndex.candles(mint)]);
-    res.json({ candles: candles.map(row => [Number(row.time), Number(row.open), Number(row.high), Number(row.low), Number(row.close), Number(row.volume)]), available: Boolean(launch), currency: 'SOL', interval: '5m', source: 'Finalized LaunchLab reserve-delta trades', scope: 'indexed-trades-only; gaps-are-not-filled', updatedAt: launch ? Number(launch.updated) : null });
+    res.json({ candles: candles.map(row => [Number(row.time), Number(row.open), Number(row.high), Number(row.low), Number(row.close), Number(row.volume)]), available: Boolean(launch), currency: 'SOL', interval: '5m', source: 'Finalized indexed execution trades', scope: 'indexed-trades-only; gaps-are-not-filled', updatedAt: launch ? Number(launch.updated) : null });
   }));
   app.get(
     "/api/launches",

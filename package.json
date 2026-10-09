@@ -10,8 +10,9 @@
     "indexer": "node server/indexer.js",
     "indexer:jobs": "node server/indexer-admin.js",
     "db:migrate": "node server/migrate.js",
+    "charts:backfill": "node server/chart-backfill.js",
     "db:import-catalogue": "node server/import-catalogue.js",
-    "test": "node --test tests/amounts.test.js tests/api.test.js tests/app-store.test.js tests/buffers.test.js tests/wallet-links.test.js tests/transactions.test.js tests/security-store.test.js tests/indexer.test.js tests/launch-validation.test.js tests/launch-purchases.test.js tests/claim-validation.test.js tests/market-feed.test.js tests/catalogue.test.js tests/pump.test.js tests/token-metadata.test.js",
+    "test": "node --test tests/amounts.test.js tests/api.test.js tests/app-store.test.js tests/buffers.test.js tests/wallet-links.test.js tests/transactions.test.js tests/security-store.test.js tests/indexer.test.js tests/launch-validation.test.js tests/launch-purchases.test.js tests/claim-validation.test.js tests/market-feed.test.js tests/catalogue.test.js tests/pump.test.js tests/token-metadata.test.js tests/chart-candles.test.js tests/market-provider-cache.test.js tests/pumpswap-indexer.test.js",
     "test:catalogue": "node --test tests/catalogue.test.js",
     "test:postgres": "node --test tests/postgres.test.js",
     "test:ui": "playwright test"

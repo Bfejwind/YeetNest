@@ -1,6 +1,39 @@
 import { test, expect } from '@playwright/test';
 import { Keypair } from '@solana/web3.js';
 
+test('Pump chart uses local candles after graduation with USD, FDV and range controls', async ({ page }) => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  await page.route('**/api/status', route => route.fulfill({ json: { network: 'mainnet-beta' } }));
+  await page.route('**/api/tokens*', route => route.fulfill({ json: [] }));
+  await page.route('**/api/launches*', route => route.fulfill({ json: [{ id: mint, mint, poolId: mint, name: 'Local Pump', ticker: 'LOCAL', protocol: 'pump', launchStatus: 'Graduated', progress: 100, source: 'MemePop', decimals: 6 }] }));
+  await page.route('**/api/holders/*', route => route.fulfill({ json: { accounts: [] } }));
+  await page.route('**/api/trades/*', route => route.fulfill({ json: { trades: [] } }));
+  let requests = 0;
+  await page.route('**/api/candles/*', route => {
+    requests++;
+    const query = new URL(route.request().url()).searchParams;
+    return route.fulfill({ json: { available: true, currency: query.get('currency'), metric: query.get('metric'), candles: Array.from({ length: 24 }, (_, index) => [1700002800 + index * 60, .001, .002, .0005, .0015, 2]) } });
+  });
+  await page.route('**/api/market/*', route => { throw new Error('Pump chart requested external history'); });
+  await page.goto('/');
+  await page.locator('.coin').first().click();
+  await page.getByLabel('Chart currency').selectOption('USD');
+  await expect(page.locator('.chart-header')).toContainText('Price / USD');
+  await page.getByLabel('Chart metric').selectOption('fdv');
+  await expect(page.locator('.chart-header')).toContainText('FDV / USD');
+  await page.getByLabel('Chart history').selectOption('7');
+  await expect(page.getByRole('button', { name: '15m', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const before = requests;
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('memepop-market', { detail: {} })));
+  await expect.poll(() => requests, { timeout: 10000 }).toBeGreaterThan(before);
+  await expect(page.getByLabel('Chart currency')).toHaveValue('USD');
+  for (const width of [320, 390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: `memepop-indexed-chart-${width}.png` });
+  }
+});
+
 test('token candlesticks render with volume and working timeframe controls', async ({ page }) => {
   const mint = Keypair.generate().publicKey.toBase58();
   await page.route('**/api/status', route => route.fulfill({ json: { network: 'mainnet-beta' } }));

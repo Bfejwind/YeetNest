@@ -13,6 +13,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { randomUUID } from 'node:crypto';
 import { PUMP_PROGRAM } from './pump-events.js';
 import { indexPumpTransaction } from './pump-indexer.js';
+import { indexPumpSwapTransaction, PUMPSWAP_PROGRAM } from './pumpswap-indexer.js';
+import { createRateSampler } from './chart-rates.js';
 
 if (!process.env.DATABASE_URL || !process.env.SOLANA_RPC_URL) throw new Error('Indexer requires DATABASE_URL and SOLANA_RPC_URL.');
 const settings = indexerSettings(process.env);
@@ -22,8 +24,10 @@ const protocol = process.env.INDEXER_PROTOCOL || 'pump';
 if (!['pump', 'raydium'].includes(protocol)) throw new Error('INDEXER_PROTOCOL must be pump or raydium.');
 const checkpoint = protocol === 'pump' ? 'pump-indexer' : 'launchlab-indexer';
 const program = new PublicKey(protocol === 'pump' ? PUMP_PROGRAM : LAUNCHLAB_PROGRAM);
+const scanPrograms = protocol === 'pump' ? [{ program, key: checkpoint }, { program: new PublicKey(PUMPSWAP_PROGRAM), key: 'pumpswap-indexer' }] : [{ program, key: checkpoint }];
 const records = createAppStore({ databaseUrl: process.env.DATABASE_URL });
 const index = createChainIndexStore(process.env.DATABASE_URL);
+const sampleRate = createRateSampler(index);
 const queue = createIndexerQueue(process.env.DATABASE_URL, { name: protocol === 'pump' ? 'pump' : 'launchlab' });
 const lock = new pg.Client(databaseConfig(process.env.DATABASE_URL));
 let stopping = false;
@@ -35,7 +39,10 @@ const pause = ms => delay(ms, undefined, { signal: shutdown.signal }).catch(erro
 async function processSignature(row) {
   const transaction = await connection.getTransaction(row.signature, { maxSupportedTransactionVersion: 1, commitment: 'finalized' });
   if (!transaction) throw new Error('Finalized transaction not available; cursor retained for retry.');
-  if (protocol === 'pump') return indexPumpTransaction({ transaction, row, connection, index });
+  if (protocol === 'pump') {
+    await indexPumpTransaction({ transaction, row, connection, index });
+    return indexPumpSwapTransaction({ transaction, row, connection, index });
+  }
   for (const event of decodeLaunchlabEvents(transaction)) {
     if (!['PoolCreateEvent', 'TradeEvent'].includes(event.name)) continue;
     const poolId = new PublicKey(event.data.pool_state);
@@ -68,12 +75,16 @@ try {
     try {
       const stats = await queue.stats();
       if (stats.pending + stats.processing >= settings.maxJobs) return;
+      await sampleRate().catch(() => console.error('Chart USD rate unavailable; SOL indexing continues.'));
+      for (const scan of scanPrograms) {
+      state = (await records.get(scan.key))[0] || {};
       for (const backfill of [false, true]) {
         if (stopping) break;
         // Reserve headroom for live scans; suspend historical backfill under pressure.
         if (backfill && stats.pending + stats.processing >= settings.maxJobs / 2) continue;
-        state = await scanPage({ connection, program, state, enqueue: queue.enqueue, backfill, limit: settings.pageSize });
-        await records.mutate(checkpoint, entries => { entries.splice(0, entries.length, { ...state, updatedAt: Date.now(), error: null }); });
+        state = await scanPage({ connection, program: scan.program, state, enqueue: queue.enqueue, backfill, limit: settings.pageSize });
+        await records.mutate(scan.key, entries => { entries.splice(0, entries.length, { ...state, updatedAt: Date.now(), error: null }); });
+      }
       }
     } catch (error) {
       await records.mutate(checkpoint, entries => { entries.splice(0, entries.length, { ...state, updatedAt: Date.now(), error: typeof error.code === 'number' ? error.code : 'INDEXER_RETRY' }); }).catch(() => {});

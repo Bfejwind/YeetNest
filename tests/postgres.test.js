@@ -173,6 +173,13 @@ test('PostgreSQL chain index deduplicates trades and builds exact normalized can
     await Promise.all([index.saveTrade(trade), index.saveTrade(trade)]);
     assert.equal((await index.trades(mint)).length, 1);
     const candles = await index.candles(mint, { since: 1699999900 });
+    const chart = await index.chart(mint, { since: 1699999900, before: 1700000100 });
+    assert.equal(chart.candles.length, 1); assert.equal(chart.candles[0][4], 1.5); assert.equal(chart.candles[0][5], 3);
+    const backfill = { ...trade, index: 'cpi:1:2', slot: 100, quote: '2000000000', venue: 'pumpswap' };
+    await index.saveTrade(backfill);
+    const updated = await index.chart(mint, { since: 1699999900, before: 1700000100 });
+    assert.equal(updated.candles[0][1], 1); assert.equal(updated.candles[0][4], 1.5); assert.equal(updated.candles[0][5], 5);
+    assert.deepEqual((await index.chart(mint, { since: 1699999900, before: 1700000100, currency: 'USD' })).candles, []);
     assert.equal(candles.length, 1);
     assert.equal(Number(candles[0].close), 1.5);
     assert.equal(Number(candles[0].volume), 3);
@@ -190,6 +197,7 @@ test('PostgreSQL chain index deduplicates trades and builds exact normalized can
   } finally {
     await cleanup.connect();
     await cleanup.query('DELETE FROM indexed_trades WHERE pool=$1', [pool]);
+    await cleanup.query('DELETE FROM chart_candles WHERE mint=$1', [mint]);
     await cleanup.query('DELETE FROM market_events WHERE mint=$1', [mint]);
     await cleanup.query('DELETE FROM indexed_launches WHERE pool=$1', [pool]);
     await Promise.all([index.close(), cleanup.end()]);

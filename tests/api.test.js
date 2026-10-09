@@ -21,6 +21,17 @@ async function withApi(fetcher, callback, config = {}) {
 }
 const ok = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 
+test('local candle API validates controls and never requests an external chart when no index exists', async () => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  await withApi(async () => { assert.fail('External provider requested for local candles'); }, async request => {
+    const result = await request(`/candles/${mint}?interval=60&days=7&currency=SOL&metric=price`);
+    assert.equal(result.status, 200); assert.equal((await result.json()).available, false);
+    for (const query of ['interval=2', 'days=999999', 'currency=EUR', 'metric=market-cap']) {
+      assert.equal((await request(`/candles/${mint}?${query}`)).status, 400);
+    }
+  });
+});
+
 test('signed follows, account deletion and creator-only stream configuration', async () => {
   const wallet = Keypair.generate(), other = Keypair.generate(), mint = Keypair.generate().publicKey.toBase58();
   await withApi(async () => ok({}), async (request, directory) => {

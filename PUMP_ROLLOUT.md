@@ -1,5 +1,7 @@
 # MemePop Pump/PumpSwap Rollout
 
+Chart update: see `CHART_SYSTEM.md`. The Pump worker now scans PumpSwap too, and local candle storage requires migration **013**. The historical checklist below predates this chart implementation; archive completeness, historical USD backfill and scale acceptance remain open.
+
 October 9, 2026. Implemented code is not equivalent to audited or funded acceptance. No paid subscription, public deployment or wallet transaction was made by this agent.
 
 ## Protocol Change

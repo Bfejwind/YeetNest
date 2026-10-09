@@ -328,10 +328,10 @@ export async function mountMarket(coin, { esc }) {
   disposeChart();
   const root = document.querySelector("#live-market");
   if (!root) return;
-  let cancelled = false, refreshTimer;
+  let cancelled = false, refreshTimer, preserveViewport = () => {};
   const changed = event => {
     if (!root.isConnected || document.hidden || (event.detail.mint && event.detail.mint !== coin.mint) || refreshTimer) return;
-    refreshTimer = setTimeout(() => { if (root.isConnected) mountMarket(coin, { esc }); }, 5000);
+    refreshTimer = setTimeout(() => { if (root.isConnected) { preserveViewport(); mountMarket(coin, { esc }); } }, 5000);
   };
   window.addEventListener('memepop-market', changed);
   const cleanupUpdates = () => { cancelled = true; clearTimeout(refreshTimer); window.removeEventListener('memepop-market', changed); };
@@ -339,8 +339,12 @@ export async function mountMarket(coin, { esc }) {
   root.innerHTML =
     '<div class="market-loading">Loading live pool data...</div>';
   try {
-    const curve = Boolean(coin.poolId && coin.launchStatus !== 'Graduated');
-    const result = await chain.api(`${curve ? '/curve/' : '/market/'}${coin.mint}`);
+    let curve = Boolean(coin.poolId && coin.launchStatus !== 'Graduated');
+    let indexed = coin.protocol === 'pump';
+    const preferences = { interval: root.dataset.interval || '60', days: root.dataset.days || '1', currency: root.dataset.currency || 'SOL', metric: root.dataset.metric || 'price' };
+    const result = await chain.api(`${indexed ? '/candles/' : curve ? '/curve/' : '/market/'}${coin.mint}?${new URLSearchParams(preferences)}`);
+    indexed ||= Boolean(result.indexed);
+    curve ||= indexed;
     if (!root.isConnected || cancelled) return;
     const pair = result.pair;
     if (!curve && !pair) {
@@ -351,6 +355,29 @@ export async function mountMarket(coin, { esc }) {
       ? `<div class="chart-header"><b>Price / SOL</b><span>5M · Finalized curve trades</span></div><div class="token-chart" id="token-chart"></div>${result.candles?.length ? '' : '<p class="fine">No curve trades have been indexed yet.</p>'}`
       : `<div class="pool-metrics"><span>Price<b>${dollars(Number(pair.priceUsd))}</b></span><span>Liquidity<b>${dollars(pair.liquidity?.usd)}</b></span><span>24h trades<b>${(pair.txns?.h24?.buys || 0) + (pair.txns?.h24?.sells || 0)}</b></span></div><div class="chart-header"><b>Price / USD</b><span>1H · ${esc(pair.dexId)}</span></div><div class="token-chart" id="token-chart"></div>${result.chartError ? `<p class="fine">${esc(result.chartError)}</p>` : ""}<a class="source-link" href="https://dexscreener.com/solana/${esc(pair.pairAddress)}" target="_blank" rel="noopener noreferrer">Pool on DexScreener ${icon("external-link")}</a>`;
     createIcons({ icons });
+    if (indexed) {
+      root.querySelector('.chart-header b').textContent = `${preferences.metric === 'fdv' ? 'FDV' : 'Price'} / ${preferences.currency}`;
+      root.querySelector('.chart-header span').textContent = 'Pump + PumpSwap / Finalized';
+      if (result.conversion) {
+        const note = document.createElement('p'); note.className = 'fine'; note.textContent = result.conversion; root.append(note);
+      }
+      if (!result.candles?.length) {
+        root.querySelector('.fine')?.remove();
+        const note = document.createElement('p'); note.className = 'fine'; note.textContent = preferences.currency === 'USD' ? 'No indexed trades with recorded USD rates in this range. Switch to SOL.' : 'No trades indexed in this range yet. Check worker progress.'; root.append(note);
+      }
+      const options = document.createElement('div'); options.className = 'candle-options';
+      options.innerHTML = `<label>Currency<select aria-label="Chart currency"><option>SOL</option><option>USD</option></select></label><label>View<select aria-label="Chart metric"><option value="price">Price</option><option value="fdv">FDV</option></select></label><label>History<select aria-label="Chart history"><option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></label>`;
+      root.querySelector('.chart-header').after(options);
+      const fields = ['currency', 'metric', 'days'];
+      options.querySelectorAll('select').forEach((select, i) => {
+        select.value = preferences[fields[i]];
+        select.onchange = () => {
+          root.dataset[fields[i]] = select.value;
+          if (fields[i] === 'days') root.dataset.interval = Number(select.value) > 7 ? '3600' : Number(select.value) > 1 ? '900' : '60';
+          mountMarket({ ...coin, protocol: 'pump' }, { esc });
+        };
+      });
+    }
     const candles = new Map();
     for (const candle of result.candles) {
       if (
@@ -373,8 +400,8 @@ export async function mountMarket(coin, { esc }) {
       return;
     }
     const element = document.querySelector("#token-chart");
-    const nativeInterval = curve ? 300 : 3600;
-    const intervals = curve ? [['5m', 300], ['15m', 900], ['1h', 3600], ['4h', 14400], ['1D', 86400]] : [['1h', 3600], ['4h', 14400], ['1D', 86400]];
+    const nativeInterval = indexed ? Number(preferences.interval) : curve ? 300 : 3600;
+    const intervals = indexed ? [['1m', 60], ['5m', 300], ['15m', 900], ['1h', 3600], ['4h', 14400], ['1D', 86400]] : curve ? [['5m', 300], ['15m', 900], ['1h', 3600], ['4h', 14400], ['1D', 86400]] : [['1h', 3600], ['4h', 14400], ['1D', 86400]];
     const toolbar = document.createElement('div');
     toolbar.className = 'candle-toolbar';
     toolbar.innerHTML = `<div class="candle-intervals" role="group" aria-label="Chart timeframe">${intervals.map(([label, seconds]) => `<button type="button" data-interval="${seconds}" aria-pressed="${seconds === nativeInterval}">${label}</button>`).join('')}</div><button type="button" class="icon-button" id="fit-chart" title="Fit chart" aria-label="Fit chart">${icon('scan')}</button>`;
@@ -405,7 +432,7 @@ export async function mountMarket(coin, { esc }) {
         wickUpColor: "#93c9b0",
         wickDownColor: "#ed9a8b",
         borderVisible: false,
-        ...(curve ? { priceFormat: { type: 'price', precision: 12, minMove: 0.000000000001 } } : {}),
+        ...(curve ? { priceFormat: { type: 'price', precision: preferences.metric === 'fdv' ? 2 : 12, minMove: preferences.metric === 'fdv' ? .01 : 0.000000000001 } } : {}),
       });
     priceSeries.priceScale().applyOptions({ scaleMargins: { top: .08, bottom: .25 } });
     const volumeSeries = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'volume', lastValueVisible: false, priceLineVisible: false });
@@ -413,7 +440,7 @@ export async function mountMarket(coin, { esc }) {
     const showCandle = (candle, volume) => {
       if (!candle) return;
       const format = value => Number(value).toLocaleString('en-US', { maximumSignificantDigits: 6 });
-      readout.textContent = `O ${format(candle.open)}  H ${format(candle.high)}  L ${format(candle.low)}  C ${format(candle.close)}  Volume ${format(volume || 0)}`;
+      readout.textContent = `O ${format(candle.open)}  H ${format(candle.high)}  L ${format(candle.low)}  C ${format(candle.close)}  Volume ${format(volume || 0)} ${indexed ? preferences.currency : curve ? 'SOL' : 'USD'}`;
     };
     let latest;
     const draw = interval => {
@@ -425,7 +452,10 @@ export async function mountMarket(coin, { esc }) {
       toolbar.querySelectorAll('[data-interval]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.interval) === interval)));
       chart.timeScale().fitContent();
     };
-    toolbar.querySelectorAll('[data-interval]').forEach(button => button.onclick = () => draw(Number(button.dataset.interval)));
+    toolbar.querySelectorAll('[data-interval]').forEach(button => button.onclick = () => {
+      if (indexed) { root.dataset.interval = button.dataset.interval; mountMarket({ ...coin, protocol: 'pump' }, { esc }); }
+      else draw(Number(button.dataset.interval));
+    });
     toolbar.querySelector('#fit-chart').onclick = () => chart.timeScale().fitContent();
     chart.subscribeCrosshairMove(event => {
       const candle = event.seriesData.get(priceSeries);
@@ -433,6 +463,16 @@ export async function mountMarket(coin, { esc }) {
     });
     createIcons({ icons });
     draw(nativeInterval);
+    const viewportKey = JSON.stringify(preferences);
+    try {
+      const saved = JSON.parse(root.dataset.viewport || 'null');
+      if (saved?.key === viewportKey && saved.range) chart.timeScale().setVisibleRange(saved.range);
+    } catch { delete root.dataset.viewport; }
+    preserveViewport = () => {
+      const range = chart.timeScale().getVisibleRange();
+      if (range && chart.timeScale().scrollPosition() > 1) root.dataset.viewport = JSON.stringify({ key: viewportKey, range });
+      else delete root.dataset.viewport;
+    };
     chart.timeScale().fitContent();
     const observer = new ResizeObserver(() => {
       if (element.isConnected)
