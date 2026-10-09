@@ -147,6 +147,9 @@
 
 /* Full wordmark stays uncropped at every navigation breakpoint. */
 .brand { width: 100%; justify-content: center; }
+.brand-slogan { text-align: center; color: #ffd52a; font-size: 14px; font-weight: 700; line-height: 1.5; margin: 12px 0 0; }
+.breadcrumb { min-width: 0; align-items: center; }
+.market-slogan { color: #ffd52a; font-size: 12px; line-height: 1.5; }
 .brand-logo { display: block; width: 180px; max-width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: contain; border-radius: 4px; }
 .stat:nth-child(1) svg { color: #ffd52a; }
 .stat:nth-child(2) svg { color: #ff9b38; }
@@ -163,8 +166,14 @@
 .modal, .setup-section, .upload-control { border-color: var(--line); }
 @media (min-width: 601px) and (max-width: 950px) {
   .brand-logo { width: 52px; }
+  .brand-slogan { display: none; }
 }
 @media (max-width: 600px) {
   .brand { width: 126px; flex-shrink: 0; justify-content: flex-start; }
   .brand-logo { width: 126px; }
+  .brand-slogan { flex: 1; min-width: 0; margin: 0; font-size: 16px; text-wrap: balance; }
+  header { height: auto; min-height: 62px; gap: 12px; padding-top: 12px; padding-bottom: 12px; flex-wrap: wrap; }
+  .breadcrumb { flex: 1 1 100%; justify-content: center; }
+  .market-slogan { font-size: 11px; }
+  .header-right { margin-left: auto; }
 }

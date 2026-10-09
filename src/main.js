@@ -199,7 +199,7 @@ function render() {
     volume = coins.reduce((sum, c) => sum + (c.volume || 0), 0),
     address = chain.publicKey?.toBase58();
   document.querySelector("#app").innerHTML =
-    `<aside class="sidebar"><a class="brand" href="#" aria-label="MemePop home"><img class="brand-logo" src="${brandLogo}" alt="MemePop" width="180" height="120"/></a><div class="network"><span class="live-dot"></span> SOLANA <b>MAINNET</b></div><nav>${[
+    `<aside class="sidebar"><a class="brand" href="#" aria-label="MemePop home"><img class="brand-logo" src="${brandLogo}" alt="MemePop" width="180" height="120"/></a><p class="brand-slogan">Every Meme Starts Somewhere!</p><div class="network"><span class="live-dot"></span> SOLANA <b>MAINNET</b></div><nav>${[
       ["Explore", "compass"],
       ["Watchlist", "bookmark"],
       ["Portfolio", "chart-pie"],
@@ -211,7 +211,7 @@ function render() {
       )
       .join(
         "",
-      )}<button class="nav-item" data-launch title="Launch a coin">${I("circle-plus")}<span>Launch a coin</span>${I("arrow-up-right")}</button></nav><div class="sidebar-note"><span class="little-egg">${I("egg")}</span><h3>Small beginnings.<br>Big yeet energy.</h3><p>Your next idea belongs here.</p><button data-launch>Build your nest ${I("arrow-up-right")}</button></div><div class="sidebar-bottom"><span>Independent. Non-custodial.</span><button id="help">About MemePop ${I("arrow-up-right")}</button><span>© 2026 MemePop</span></div></aside><main><header><div class="breadcrumb">The market <span>/</span> <b>${page}</b></div><div class="header-right"><div class="mode-switch" aria-label="Trading environment"><button data-mode="demo" class="${mode === "demo" ? "active" : ""}">Demo</button><button data-mode="live" class="${mode === "live" ? "active" : ""}"><span class="live-dot"></span> Live</button></div><button class="wallet" id="wallet">${I("wallet")} ${connected() ? (mode === "demo" ? "Demo wallet" : esc(short(address))) : "Connect wallet"}</button></div></header><div class="content">${
+      )}<button class="nav-item" data-launch title="Launch a coin">${I("circle-plus")}<span>Launch a coin</span>${I("arrow-up-right")}</button></nav><div class="sidebar-note"><span class="little-egg">${I("egg")}</span><h3>Small beginnings.<br>Big yeet energy.</h3><p>Your next idea belongs here.</p><button data-launch>Build your nest ${I("arrow-up-right")}</button></div><div class="sidebar-bottom"><span>Independent. Non-custodial.</span><button id="help">About MemePop ${I("arrow-up-right")}</button><span>© 2026 MemePop</span></div></aside><main><header><div class="breadcrumb"><strong class="market-slogan">POP A MEME. PUMP THE HYPE!</strong><span>/</span> <b>${page}</b></div><div class="header-right"><div class="mode-switch" aria-label="Trading environment"><button data-mode="demo" class="${mode === "demo" ? "active" : ""}">Demo</button><button data-mode="live" class="${mode === "live" ? "active" : ""}"><span class="live-dot"></span> Live</button></div><button class="wallet" id="wallet">${I("wallet")} ${connected() ? (mode === "demo" ? "Demo wallet" : esc(short(address))) : "Connect wallet"}</button></div></header><div class="content">${
       page === "Integrations"
         ? integrations()
         : `
