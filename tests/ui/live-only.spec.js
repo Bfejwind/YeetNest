@@ -1,4 +1,28 @@
 import { test, expect } from '@playwright/test';
+import { Keypair } from '@solana/web3.js';
+
+test('token candlesticks render with volume and working timeframe controls', async ({ page }) => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  await page.route('**/api/status', route => route.fulfill({ json: { network: 'mainnet-beta' } }));
+  await page.route('**/api/tokens*', route => route.fulfill({ json: [{ id: mint, name: 'Chart Test', symbol: 'CHART', decimals: 6, usdPrice: 1 }] }));
+  await page.route('**/api/launches*', route => route.fulfill({ json: [] }));
+  await page.route('**/api/market/*', route => route.fulfill({ json: { pair: { pairAddress: mint, priceUsd: '1', dexId: 'pump', liquidity: { usd: 1000 }, txns: { h24: { buys: 1, sells: 1 } } }, candles: Array.from({ length: 24 }, (_, index) => [1700002800 + index * 3600, 1, 1.2, .8, 1 + index / 100, 50 + index]) } }));
+  await page.goto('/');
+  await page.locator('.coin').first().click();
+  await expect(page.locator('.candle-readout')).toContainText('Volume');
+  await page.getByRole('button', { name: '4h', exact: true }).click();
+  await expect(page.getByRole('button', { name: '4h', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Fit chart', exact: true }).click();
+  for (const width of [390, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect.poll(() => page.locator('#token-chart canvas').first().evaluate(canvas => {
+      const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+      return data.some((value, index) => index % 4 === 3 && value > 0);
+    })).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: `memepop-candles-${width}.png` });
+  }
+});
 
 test('starts live-only and ignores stored demo coins and balances across mobile and desktop', async ({ page }) => {
   await page.addInitScript(() => {

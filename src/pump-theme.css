@@ -151,6 +151,12 @@
 .breadcrumb { min-width: 0; align-items: center; }
 .market-slogan { color: #ffd52a; font-size: 12px; line-height: 1.5; }
 .live-environment { color: #ffd52a; font-size: 10px; white-space: nowrap; }
+.candle-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); padding: 8px 0; }
+.token-chart { height: 340px; }
+.candle-intervals { display: flex; gap: 4px; }
+.candle-intervals button { padding: 6px 9px; font-size: 12px; border-radius: 3px; }
+.candle-intervals button[aria-pressed="true"] { color: #ffd52a; background: #ffd52a1a; }
+.candle-readout { font-size: 10px; line-height: 1.6; color: var(--muted); padding: 8px 0; overflow-wrap: anywhere; }
 .brand-logo { display: block; width: 180px; max-width: 100%; height: auto; aspect-ratio: 3 / 2; object-fit: contain; border-radius: 4px; }
 .stat:nth-child(1) svg { color: #ffd52a; }
 .stat:nth-child(2) svg { color: #ff9b38; }

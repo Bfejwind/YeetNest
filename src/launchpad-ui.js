@@ -1,6 +1,7 @@
 import { createIcons, icons } from "./ui-icons.js";
 import * as chain from "./chain.js";
-import { createChart, CandlestickSeries } from "lightweight-charts";
+import { createChart, CandlestickSeries, HistogramSeries } from "lightweight-charts";
+import { aggregateCandles } from './chart-candles.js';
 
 const icon = (name) => `<i data-lucide="${name}"></i>`;
 const dollars = (n) =>
@@ -372,9 +373,19 @@ export async function mountMarket(coin, { esc }) {
       return;
     }
     const element = document.querySelector("#token-chart");
+    const nativeInterval = curve ? 300 : 3600;
+    const intervals = curve ? [['5m', 300], ['15m', 900], ['1h', 3600], ['4h', 14400], ['1D', 86400]] : [['1h', 3600], ['4h', 14400], ['1D', 86400]];
+    const toolbar = document.createElement('div');
+    toolbar.className = 'candle-toolbar';
+    toolbar.innerHTML = `<div class="candle-intervals" role="group" aria-label="Chart timeframe">${intervals.map(([label, seconds]) => `<button type="button" data-interval="${seconds}" aria-pressed="${seconds === nativeInterval}">${label}</button>`).join('')}</div><button type="button" class="icon-button" id="fit-chart" title="Fit chart" aria-label="Fit chart">${icon('scan')}</button>`;
+    element.before(toolbar);
+    const readout = document.createElement('div');
+    readout.className = 'candle-readout';
+    readout.setAttribute('aria-label', 'Candle values');
+    element.before(readout);
     const theme = getComputedStyle(document.documentElement);
     const chart = createChart(element, {
-      height: 220,
+      height: 340,
       width: element.clientWidth,
       layout: {
         background: { color: theme.getPropertyValue("--surface").trim() },
@@ -388,16 +399,40 @@ export async function mountMarket(coin, { esc }) {
       rightPriceScale: { borderColor: theme.getPropertyValue("--line").trim() },
       timeScale: { borderColor: theme.getPropertyValue("--line").trim(), timeVisible: true },
     });
-    chart
-      .addSeries(CandlestickSeries, {
+    const priceSeries = chart.addSeries(CandlestickSeries, {
         upColor: "#93c9b0",
         downColor: "#ed9a8b",
         wickUpColor: "#93c9b0",
         wickDownColor: "#ed9a8b",
         borderVisible: false,
         ...(curve ? { priceFormat: { type: 'price', precision: 12, minMove: 0.000000000001 } } : {}),
-      })
-      .setData([...candles.values()].sort((a, b) => a.time - b.time));
+      });
+    priceSeries.priceScale().applyOptions({ scaleMargins: { top: .08, bottom: .25 } });
+    const volumeSeries = chart.addSeries(HistogramSeries, { priceFormat: { type: 'volume' }, priceScaleId: 'volume', lastValueVisible: false, priceLineVisible: false });
+    volumeSeries.priceScale().applyOptions({ scaleMargins: { top: .82, bottom: 0 }, visible: false });
+    const showCandle = (candle, volume) => {
+      if (!candle) return;
+      const format = value => Number(value).toLocaleString('en-US', { maximumSignificantDigits: 6 });
+      readout.textContent = `O ${format(candle.open)}  H ${format(candle.high)}  L ${format(candle.low)}  C ${format(candle.close)}  Volume ${format(volume || 0)}`;
+    };
+    let latest;
+    const draw = interval => {
+      const rows = aggregateCandles(result.candles, interval);
+      priceSeries.setData(rows.map(({ volume, ...candle }) => candle));
+      volumeSeries.setData(rows.map(row => ({ time: row.time, value: row.volume, color: row.close >= row.open ? '#93c9b066' : '#ed9a8b66' })));
+      latest = rows.at(-1);
+      showCandle(latest, latest?.volume);
+      toolbar.querySelectorAll('[data-interval]').forEach(button => button.setAttribute('aria-pressed', String(Number(button.dataset.interval) === interval)));
+      chart.timeScale().fitContent();
+    };
+    toolbar.querySelectorAll('[data-interval]').forEach(button => button.onclick = () => draw(Number(button.dataset.interval)));
+    toolbar.querySelector('#fit-chart').onclick = () => chart.timeScale().fitContent();
+    chart.subscribeCrosshairMove(event => {
+      const candle = event.seriesData.get(priceSeries);
+      showCandle(candle || latest, candle ? event.seriesData.get(volumeSeries)?.value : latest?.volume);
+    });
+    createIcons({ icons });
+    draw(nativeInterval);
     chart.timeScale().fitContent();
     const observer = new ResizeObserver(() => {
       if (element.isConnected)

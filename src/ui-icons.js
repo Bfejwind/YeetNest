@@ -5,7 +5,7 @@ import {
   FlaskConical, Gift, GraduationCap, Image, ImagePlus, KeyRound, Layers,
   LayoutGrid, List, LoaderCircle, MoveUpRight, Orbit, Palette, PenLine, PlugZap,
   Plus, RefreshCw, Save, Search, Sparkles, TrendingDown, TrendingUp, Wallet, X,
-  Columns3, Trophy, UserRound, MessageSquare, Trash2, Flag, Smartphone, ChevronLeft, ChevronRight,
+  Columns3, Trophy, UserRound, MessageSquare, Trash2, Flag, Smartphone, ChevronLeft, ChevronRight, Scan,
 } from 'lucide';
 
 export { createIcons };
@@ -16,5 +16,5 @@ export const icons = {
   Gift, GraduationCap, Image, ImagePlus, KeyRound, Layers, LayoutGrid,
   List, LoaderCircle, MoveUpRight, Orbit, Palette, PenLine, PlugZap, Plus,
   RefreshCw, Save, Search, Sparkles, TrendingDown, TrendingUp, Wallet, X,
-  Columns3, Trophy, UserRound, MessageSquare, Trash2, Flag, Smartphone, ChevronLeft, ChevronRight,
+  Columns3, Trophy, UserRound, MessageSquare, Trash2, Flag, Smartphone, ChevronLeft, ChevronRight, Scan,
 };
