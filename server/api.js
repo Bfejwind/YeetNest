@@ -1,5 +1,6 @@
 import "dotenv/config";
 import express from "express";
+import { marketProviderCache } from './market-provider-cache.js';
 import { randomBytes, createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
@@ -157,7 +158,7 @@ export function createApi({
     res.json(await tokenMetadata(launch.uri));
   }));
   };
-  async function upstream(url, options = {}) {
+  async function fetchUpstream(url, options = {}) {
     let response;
     try {
       response = await fetcher(url, {
@@ -181,6 +182,7 @@ export function createApi({
       );
     return data;
   }
+  const upstream = marketProviderCache(fetchUpstream);
   const jupiter = (path, options = {}) =>
     upstream(`https://api.jup.ag${path}`, {
       ...options,
