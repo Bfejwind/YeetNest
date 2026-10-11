@@ -1,7 +1,6 @@
 import { createIcons, icons } from "./ui-icons.js";
 import brandLogo from '../logo.png';
-import { createAvatar } from "@dicebear/core";
-import * as bottts from "@dicebear/bottts-neutral";
+import { isRealCoin, mergeCoin } from './coin-catalogue.js';
 import * as chain from "./chain.js";
 import { fromUnits, toUnits } from "./amounts.js";
 import { installLaunchpadUI, mountMarket, cleanupMarket, reviewInitialPurchase } from "./launchpad-ui.js";
@@ -34,6 +33,9 @@ const demoCreator = '';
 let watchlist = [];
 let positions = [], demoBalance = 0;
 const mode = 'live';
+try {
+  for (const key of ['yn-coins', 'yn-positions', 'yn-balance']) localStorage.removeItem(key);
+} catch { /* Storage may be disabled by the browser. */ }
 let page = "Explore",
   tab = "Trending",
   category = "All coins",
@@ -50,7 +52,6 @@ let demoWallet = false,
 let config = null,
   searchTimer,
   walletEpoch = 0;
-const cache = new Map();
 const money = (n) =>
   n == null
     ? "--"
@@ -68,39 +69,12 @@ function image(coin) {
     return coin.image;
   if (coin.image && /^https:\/\//.test(coin.image))
     return `/api/artwork?uri=${encodeURIComponent(coin.image)}`;
-  const seed = String(coin.art || coin.ticker);
-  if (!cache.has(seed))
-    cache.set(
-      seed,
-      createAvatar(bottts, {
-        seed,
-        backgroundColor: [
-          {
-            cat: "f4c85f",
-            chill: "a4ded1",
-            pepe: "b3d77e",
-            degen: "f6b8c7",
-            dog: "9dd1e8",
-            wojak: "dac5e5",
-            money: "e7d68b",
-            grass: "a3c68d",
-          }[seed] || "f5bfac",
-        ],
-      }).toDataUri(),
-    );
-  return cache.get(seed);
+  return '';
 }
 const art = (coin) =>
-  `<img src="${esc(image(coin))}" alt="${esc(coin.name)}" loading="lazy"/>`;
-document.addEventListener('error', event => {
-  const element = event.target;
-  if (element instanceof HTMLImageElement && element.getAttribute('src')?.startsWith('/api/metadata/')) element.src = image({ ticker: element.alt || 'TOKEN' });
-}, true);
+  image(coin) ? `<img src="${esc(image(coin))}" alt="${esc(coin.name)}" loading="lazy"/>` : '<span class="missing-coin-art" title="Coin artwork unavailable" aria-label="Coin artwork unavailable">?</span>';
 function persist() {
-  localStorage.setItem("yn-coins", JSON.stringify(demoCoins));
-  if (mode === 'demo') localStorage.setItem("yn-watchlist", JSON.stringify(watchlist));
-  localStorage.setItem("yn-positions", JSON.stringify(positions));
-  localStorage.setItem("yn-balance", JSON.stringify(demoBalance));
+  localStorage.setItem("yn-watchlist", JSON.stringify(watchlist));
 }
 function tokenFromApi(t) {
   return {
@@ -124,7 +98,7 @@ function tokenFromApi(t) {
     created: t.firstPool?.createdAt ? Date.parse(t.firstPool.createdAt) : null,
   };
 }
-const allCoins = () => (mode === "demo" ? demoCoins : liveCoins);
+const allCoins = () => liveCoins.filter(isRealCoin);
 function filtered() {
   const holdings = mode === "demo" ? positions : liveHoldings;
   return allCoins()
@@ -543,7 +517,7 @@ async function loadMoreIndexed() {
     const result = await chain.api(`/launches/indexed?query=${encodeURIComponent(expectedQuery)}&${page}&limit=100`);
     if (query !== expectedQuery || liveRequest !== expectedRequest || mode !== 'live') return;
     const merged = new Map(liveCoins.map(coin => [coin.mint, coin]));
-    for (const coin of result.coins || []) merged.set(coin.mint, { ...merged.get(coin.mint), ...coin });
+    for (const coin of result.coins || []) if (isRealCoin(coin)) merged.set(coin.mint, mergeCoin(merged.get(coin.mint), coin));
     liveCoins = [...merged.values()];
     liveIndexOffset += (result.coins || []).length;
     liveIndexCursor = result.nextCursor || null;
@@ -578,9 +552,9 @@ async function refreshLive(background = false) {
   liveIndexCursor = results[2].status === 'fulfilled' ? results[2].value.nextCursor || null : null;
   liveIndexHasMore = results[2].status === 'fulfilled' && Boolean(results[2].value.hasMore);
   const merged = new Map(remote.map((c) => [c.mint, c]));
-  if (results[2].status === 'fulfilled') for (const c of results[2].value.coins || []) merged.set(c.mint, { ...merged.get(c.mint), ...c });
+  if (results[2].status === 'fulfilled') for (const c of results[2].value.coins || []) if (isRealCoin(c)) merged.set(c.mint, mergeCoin(merged.get(c.mint), c));
   for (const c of registered)
-    merged.set(c.mint, { ...merged.get(c.mint), ...c });
+    if (isRealCoin(c)) merged.set(c.mint, mergeCoin(merged.get(c.mint), c));
   for (const holding of liveHoldings)
     if (!merged.has(holding.mint))
       merged.set(
@@ -1272,10 +1246,12 @@ document.addEventListener(
     if (!(img instanceof HTMLImageElement) || img.dataset.fallback) return;
     img.dataset.fallback = "true";
     img.title = "Artwork unavailable from the provider";
-    img.src = createAvatar(bottts, {
-      seed: img.alt || "MemePop",
-      backgroundColor: ["f5bfac"],
-    }).toDataUri();
+    const placeholder = document.createElement('span');
+    placeholder.className = 'missing-coin-art';
+    placeholder.title = 'Coin artwork unavailable';
+    placeholder.setAttribute('aria-label', 'Coin artwork unavailable');
+    placeholder.textContent = '?';
+    img.replaceWith(placeholder);
   },
   true,
 );

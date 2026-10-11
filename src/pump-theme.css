@@ -153,6 +153,7 @@
 .live-environment { color: #ffd52a; font-size: 10px; white-space: nowrap; }
 .candle-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); padding: 8px 0; }
 .token-chart { height: 340px; }
+.missing-coin-art { display: inline-flex; width: 48px; height: 48px; flex-shrink: 0; align-items: center; justify-content: center; background: var(--surface); color: var(--muted); border: 1px solid var(--border); font-size: 20px; }
 .external-token-chart { display: block; width: 100%; height: 460px; min-width: 0; border: 0; background: var(--surface); }
 .candle-options { display: flex; flex-wrap: wrap; gap: 12px; padding: 10px 0; }
 .candle-options label { flex: 1; min-width: 70px; font-size: 10px; color: var(--muted); }
