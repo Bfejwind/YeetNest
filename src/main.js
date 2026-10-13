@@ -1250,6 +1250,11 @@ document.addEventListener(
       img.src = `/api/metadata/${encodeURIComponent(img.dataset.coinMint)}/artwork?provider=dex`;
       return;
     }
+    if (img.dataset.coinMint && !img.dataset.internet && img.getAttribute('src')?.startsWith('/api/metadata/')) {
+      img.dataset.internet = 'true';
+      img.src = `/api/metadata/${encodeURIComponent(img.dataset.coinMint)}/artwork?provider=internet`;
+      return;
+    }
     if (img.dataset.coinMint && !img.dataset.direct && img.getAttribute('src')?.startsWith('/api/artwork?')) {
       try {
         const uri = new URL(new URL(img.src).searchParams.get('uri'));

@@ -21,6 +21,22 @@ async function withApi(fetcher, callback, config = {}) {
 }
 const ok = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 
+test('internet artwork recovery uses exact-mint GeckoTerminal metadata', async () => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  await withApi(async url => {
+    if (String(url).includes('api.geckoterminal.com')) {
+      assert.ok(String(url).includes(`/tokens/${mint}/info`));
+      return ok({ data: { attributes: { address: mint, image_url: 'https://static.jup.ag/internet.png' } } });
+    }
+    assert.equal(String(url), 'https://static.jup.ag/internet.png');
+    return new Response(Buffer.from([137, 80, 78, 71]), { headers: { 'content-type': 'image/png' } });
+  }, async request => {
+    const response = await request(`/metadata/${mint}/artwork?provider=internet`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'image/png');
+  });
+});
+
 test('artwork recovery skips a broken Jupiter URL and finds the matching token on DexScreener', async () => {
   const mint = Keypair.generate().publicKey.toBase58();
   await withApi(async url => {

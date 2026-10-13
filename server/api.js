@@ -170,28 +170,36 @@ export function createApi({
     };
     const excluded = normalizeArtwork(req.query.exclude);
     const dexOnly = req.query.provider === 'dex';
+    const internetOnly = req.query.provider === 'internet';
     const usable = value => {
       const normalized = normalizeArtwork(value);
       return normalized && normalized !== excluded ? normalized : null;
     };
     const cached = artworkReferences.get(mint);
-    let image = !dexOnly && cached?.expires > Date.now() ? usable(cached.image) : null;
+    let image = !dexOnly && !internetOnly && cached?.expires > Date.now() ? usable(cached.image) : null;
     if (!image) {
       const launch = await chainIndex?.getLaunch(mint);
-      if (!dexOnly && launch?.uri) {
+      if (!dexOnly && !internetOnly && launch?.uri) {
         try { image = usable((await tokenMetadata(launch.uri)).image); } catch { /* Try independent token providers below. */ }
       }
-      if (!image && !dexOnly) {
+      if (!image && !dexOnly && !internetOnly) {
         try {
           const tokens = await jupiter(`/tokens/v2/search?query=${mint}`);
           image = Array.isArray(tokens) ? usable(tokens.find(token => token.id === mint)?.icon) : null;
         } catch { /* Artwork discovery must not depend on one provider. */ }
       }
-      if (!image) {
+      if (!image && !internetOnly) {
         try {
           const pairs = await upstream(`https://api.dexscreener.com/token-pairs/v1/solana/${mint}`);
           image = Array.isArray(pairs) ? pairs.filter(pair => pair.chainId === 'solana' && pair.baseToken?.address === mint).map(pair => usable(pair.info?.imageUrl)).find(Boolean) : null;
         } catch { /* Report unavailable artwork rather than invent an image. */ }
+      }
+      if (!image) {
+        try {
+          const result = await upstream(`https://api.geckoterminal.com/api/v2/networks/solana/tokens/${mint}/info`, { headers: { Accept: 'application/json;version=20230302' } });
+          const info = result.data?.attributes;
+          if (info?.address === mint) image = usable(info.image_url);
+        } catch { /* Internet discovery is subject to provider coverage and quotas. */ }
       }
       let url;
       try { url = new URL(image); } catch { throw fail('Token artwork is not available from metadata or providers.', 404); }
@@ -200,7 +208,7 @@ export function createApi({
       if (artworkReferences.size >= 500) artworkReferences.delete(artworkReferences.keys().next().value);
       artworkReferences.set(mint, { image, expires: Date.now() + 900000 });
     }
-    res.setHeader('Cache-Control', excluded || dexOnly ? 'no-store' : 'public, max-age=300');
+    res.setHeader('Cache-Control', excluded || dexOnly || internetOnly ? 'no-store' : 'public, max-age=300');
     res.setHeader('Referrer-Policy', 'no-referrer');
     // Unknown provider hosts are fetched by the browser, never by our server.
     res.redirect(302, imageHosts.has(new URL(image).hostname) ? `/api/artwork?uri=${encodeURIComponent(image)}` : image);
