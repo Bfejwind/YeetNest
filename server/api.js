@@ -208,10 +208,10 @@ export function createApi({
       if (artworkReferences.size >= 500) artworkReferences.delete(artworkReferences.keys().next().value);
       artworkReferences.set(mint, { image, expires: Date.now() + 900000 });
     }
-    res.setHeader('Cache-Control', excluded || dexOnly || internetOnly ? 'no-store' : 'public, max-age=300');
+    res.setHeader('Cache-Control', excluded || dexOnly || internetOnly || req.query.direct === '1' ? 'no-store' : 'public, max-age=300');
     res.setHeader('Referrer-Policy', 'no-referrer');
     // Unknown provider hosts are fetched by the browser, never by our server.
-    res.redirect(302, imageHosts.has(new URL(image).hostname) ? `/api/artwork?uri=${encodeURIComponent(image)}` : image);
+    res.redirect(302, req.query.direct !== '1' && imageHosts.has(new URL(image).hostname) ? `/api/artwork?uri=${encodeURIComponent(image)}` : image);
   }));
   app.get('/api/metadata/:mint', route(async (req, res) => {
     const launch = await chainIndex?.getLaunch(address(req.params.mint));
@@ -459,9 +459,9 @@ export function createApi({
           const { done, value } = await reader.read();
           if (done) break;
           size += value.length;
-          if (size > 2 * 1024 * 1024) {
+          if (size > 5 * 1024 * 1024) {
             await reader.cancel();
-            throw fail("Artwork exceeds 2 MB.", 413);
+            throw fail("Artwork exceeds 5 MB.", 413);
           }
           chunks.push(Buffer.from(value));
         }

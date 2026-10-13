@@ -21,6 +21,14 @@ async function withApi(fetcher, callback, config = {}) {
 }
 const ok = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 
+test('artwork proxy accepts provider images within the five MB upload limit', async () => {
+  await withApi(async () => new Response(Buffer.alloc(3 * 1024 * 1024), { headers: { 'content-type': 'image/png' } }), async request => {
+    const result = await request('/artwork?uri=' + encodeURIComponent('https://static.jup.ag/large.png'));
+    assert.equal(result.status, 200);
+    assert.equal((await result.arrayBuffer()).byteLength, 3 * 1024 * 1024);
+  });
+});
+
 test('internet artwork recovery uses exact-mint GeckoTerminal metadata', async () => {
   const mint = Keypair.generate().publicKey.toBase58();
   await withApi(async url => {

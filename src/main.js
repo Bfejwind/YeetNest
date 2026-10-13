@@ -70,7 +70,7 @@ function image(coin) {
     return coin.image;
   if (coin.image && /^https:\/\//.test(coin.image))
     return `/api/artwork?uri=${encodeURIComponent(coin.image)}`;
-  return '';
+  return coin.mint ? `/api/metadata/${encodeURIComponent(coin.mint)}/artwork` : '';
 }
 const art = (coin) =>
   image(coin) ? `<img src="${esc(image(coin))}" data-coin-mint="${esc(coin.mint || '')}" alt="${esc(coin.name)}" loading="lazy" referrerpolicy="no-referrer"/>` : '<span class="missing-coin-art" title="Coin artwork unavailable" aria-label="Coin artwork unavailable">?</span>';
@@ -1245,6 +1245,15 @@ document.addEventListener(
   (event) => {
     const img = event.target;
     if (!(img instanceof HTMLImageElement) || img.dataset.fallback) return;
+    if (img.dataset.coinMint && img.getAttribute('src')?.startsWith('/api/metadata/')) {
+      const candidate = new URL(img.src);
+      if (!candidate.searchParams.has('direct') && img.dataset.directMetadata !== candidate.href) {
+        img.dataset.directMetadata = candidate.href;
+        candidate.searchParams.set('direct', '1');
+        img.src = candidate.pathname + candidate.search;
+        return;
+      }
+    }
     if (img.dataset.coinMint && !img.dataset.dex && img.getAttribute('src')?.startsWith('/api/metadata/')) {
       img.dataset.dex = 'true';
       img.src = `/api/metadata/${encodeURIComponent(img.dataset.coinMint)}/artwork?provider=dex`;
