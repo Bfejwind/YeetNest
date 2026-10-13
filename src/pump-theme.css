@@ -153,7 +153,8 @@
 .live-environment { color: #ffd52a; font-size: 10px; white-space: nowrap; }
 .candle-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); padding: 8px 0; }
 .token-chart { height: 340px; }
-footer { flex-wrap: wrap; }
+footer { flex-wrap: wrap; font-size: 11px; }
+@media (max-width: 600px) { footer { font-size: 9px; } }
 footer .powered-by { justify-content: flex-end; text-align: right; margin-left: auto; }
 .token-overlay { padding: 16px; }
 .token-modal { width: min(1040px, 100%); max-height: calc(100dvh - 32px); padding: 52px 32px 32px; }
