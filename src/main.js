@@ -715,27 +715,7 @@ function walletModal() {
               if (!b.isConnected) { await chain.disconnectWallet(); return; }
               watchlist = [];
               walletEpoch++;
-              const provider = chain.provider;
-              provider.on?.("accountChanged", async () => {
-                if (chain.provider !== provider) return;
-                walletEpoch++;
-                solBalance = null;
-                liveHoldings = [];
-                watchlist = [];
-                await chain.disconnectWallet();
-                if (mode === "live") render();
-                toast("Wallet account changed. Reconnect to continue.");
-              });
-              provider.on?.("disconnect", () => {
-                if (chain.provider !== provider) return;
-                walletEpoch++;
-                solBalance = null;
-                liveHoldings = [];
-                watchlist = [];
-                if (chain.provider === provider)
-                  chain.disconnectWallet().catch(() => {});
-                if (mode === "live") render();
-              });
+              bindWalletEvents();
               render();
               refreshHoldings();
             } catch (e) {
@@ -1071,19 +1051,22 @@ function detail(id) {
       const quickAmounts = document.querySelector('.quick-amounts');
       const renderQuickAmounts = () => {
         const selling = mode === 'live' && side === 'Sell';
-        quickAmounts.innerHTML = (selling ? [25, 50, 75, 100] : [0.1, 0.5, 1, 2]).map(value => `<button type="button" data-value="${value}">${value}${selling ? '%' : ''}</button>`).join('');
+        quickAmounts.innerHTML = (selling ? [25, 50, 75, 100] : [0.1, 0.5, 1, 2]).map(value => `<button type="button" data-value="${value}"${selling && value === 100 ? ' title="Sell maximum token balance" aria-label="Sell maximum token balance"' : ''}>${selling && value === 100 ? 'Max' : `${value}${selling ? '%' : ''}`}</button>`).join('');
         quickAmounts.querySelectorAll('button').forEach(button => button.onclick = async () => {
           if (!selling) { document.querySelector('[name=amount]').value = button.dataset.value; return; }
           const wallet = chain.publicKey?.toBase58();
           if (!wallet) { walletModal(); return; }
           button.disabled = true;
           try {
-            const token = (await chain.balances()).tokens.find(token => token.mint === coin.mint);
+            const balances = await chain.balances();
+            if (balances.tokensUnavailable) throw new Error('Token balances are incomplete. Refresh balances before selecting Max or a percentage.');
+            const token = balances.tokens.find(token => token.mint === coin.mint);
             if (chain.publicKey?.toBase58() !== wallet || !quickAmounts.isConnected || side !== 'Sell') return;
             if (!token) throw new Error('No token balance available.');
             const raw = BigInt(token.amount) * BigInt(button.dataset.value) / 100n;
             if (!raw) throw new Error('Selected amount rounds to zero.');
             document.querySelector('[name=amount]').value = fromUnits(raw.toString(), token.decimals);
+            document.querySelector('#form-error').textContent = '';
           } catch (error) { document.querySelector('#form-error').textContent = error.message; }
           finally { button.disabled = false; }
         });
@@ -1302,9 +1285,23 @@ document.addEventListener(
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeModal();
 });
+function bindWalletEvents() {
+  const provider = chain.provider;
+  const clear = async () => {
+    if (chain.provider !== provider) return;
+    walletEpoch++; solBalance = null; liveHoldings = []; watchlist = [];
+    await chain.disconnectWallet(); render();
+  };
+  provider?.on?.('accountChanged', clear);
+  provider?.on?.('disconnect', clear);
+}
 render();
 loadStatus();
 refreshLive();
+chain.restoreWallet().then(restored => {
+  if (!restored) return;
+  walletEpoch++; bindWalletEvents(); render(); refreshHoldings();
+});
 setInterval(() => {
   if (
     mode === "live" &&

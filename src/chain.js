@@ -1,4 +1,5 @@
 import { Buffer } from "buffer";
+import { claimBlockhashOnlyChange } from './claim-message.js';
 import {
   Connection,
   PublicKey,
@@ -58,7 +59,7 @@ export async function api(path, options = {}) {
   } finally { clearTimeout(timer); }
 }
 
-export async function connectWallet(name) {
+export async function connectWallet(name, { silent = false } = {}) {
   if (hostedDemo) throw new Error("Mainnet wallet connections are unavailable in the online demo.");
   if (connecting) throw new Error('A wallet connection request is already in progress. Finish or close it first.');
   connecting = true;
@@ -67,13 +68,14 @@ export async function connectWallet(name) {
   try {
     candidate = await findWalletProvider(name);
     if (attempt !== connectionAttempt) throw new Error('Wallet connection was cancelled.');
-    const result = await requestWalletConnection(candidate, name);
+    const result = await requestWalletConnection(silent ? { connect: () => typeof candidate.autoConnect === 'function' ? candidate.autoConnect() : candidate.connect({ onlyIfTrusted: true }) } : candidate, name, silent ? 8000 : 30000);
     if (attempt !== connectionAttempt) throw new Error('Wallet connection was cancelled.');
     const key = result?.publicKey || candidate.publicKey;
     if (!key) throw new Error("Wallet did not return a public address.");
     const connectedKey = new PublicKey(key.toString());
     provider = candidate;
     publicKey = connectedKey;
+    try { localStorage.setItem('memepop-wallet', name); } catch {}
   } catch(error) {
     candidate?.destroy?.();
     throw error;
@@ -83,6 +85,7 @@ export async function connectWallet(name) {
 }
 
 export async function disconnectWallet() {
+  try { localStorage.removeItem('memepop-wallet'); } catch {}
   connectionAttempt++;
   const old = provider;
   const oldSession = session;
@@ -92,6 +95,14 @@ export async function disconnectWallet() {
   if (oldSession) await fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${oldSession}` }, signal: AbortSignal.timeout(5000) }).catch(() => {});
   try { await old?.disconnect?.(); }
   finally { old?.destroy?.(); }
+}
+
+export async function restoreWallet() {
+  let name;
+  try { name = localStorage.getItem('memepop-wallet'); } catch { return false; }
+  if (!['Phantom', 'Solflare'].includes(name)) return false;
+  try { await connectWallet(name, { silent: true }); return true; }
+  catch { return false; }
 }
 
 export async function authenticate() {
@@ -162,8 +173,16 @@ export async function submitAndConfirm(transaction, context = {}, onSubmitted = 
   const original = Buffer.from(transaction.message.serialize());
   const signed = await withTimeout(() => signer.signTransaction(transaction), 60000, 'Wallet transaction signing timed out. No transaction was broadcast by this request. Close the pending wallet prompt and recheck wallet activity before preparing again.');
   if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during signing.');
-  if (!Buffer.from(signed.message.serialize()).equals(original))
-    throw new Error("Wallet changed the transaction message.");
+  if (!Buffer.from(signed.message.serialize()).equals(original)) {
+    if (context.operation !== 'creator-claim' || context.protocol !== 'pump' || !claimBlockhashOnlyChange(original, signed.message)) {
+      throw new Error('Wallet changed the reviewed transaction instructions or account permissions. Nothing was broadcast. Disable wallet transaction modifications and prepare again.');
+    }
+    const valid = await connection.isBlockhashValid(signed.message.recentBlockhash, 'confirmed');
+    if (!valid.value) throw new Error('Wallet returned an expired claim blockhash. Nothing was broadcast. Prepare again.');
+    const check = await connection.simulateTransaction(signed, { sigVerify: true, commitment: 'confirmed' });
+    if (check.value.err) throw new Error(`Signed creator claim failed simulation: ${JSON.stringify(check.value.err)}. Nothing was broadcast.`);
+    if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during claim validation. Nothing was broadcast.');
+  }
   const signature = bs58.encode(signed.signatures[0]);
   const existing = readTransactions().find(row => row.signature === signature);
   if (existing) throw new TransactionOutcomeError(signature, existing.state, 'This signed transaction was already attempted.');

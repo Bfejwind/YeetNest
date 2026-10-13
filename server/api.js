@@ -49,6 +49,7 @@ const rpcMethods = new Set([
   "getTokenSupply",
   "getMinimumBalanceForRentExemption",
   "getFeeForMessage",
+  "isBlockhashValid",
   "simulateTransaction",
   "sendTransaction",
   "getSignatureStatuses",
