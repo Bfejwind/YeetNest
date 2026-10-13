@@ -1,5 +1,22 @@
 import { VersionedMessage, TransactionMessage, ComputeBudgetProgram } from '@solana/web3.js';
 import { Buffer } from 'buffer';
+export const LIGHTHOUSE_PROGRAM = 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95';
+
+function guardedInstructions(before, after) {
+  const original = before.instructions.filter(ix => !ix.programId.equals(ComputeBudgetProgram.programId));
+  const returned = after.instructions.filter(ix => !ix.programId.equals(ComputeBudgetProgram.programId));
+  const extras = returned.slice(original.length);
+  const allowedAccounts = new Map(before.instructions.flatMap(ix => ix.keys.map(key => [key.pubkey.toBase58(), key])));
+  if (extras.length > 8) return null;
+  for (const ix of extras) {
+    const data = Buffer.from(ix.data);
+    // Only assertion variants; memory writes/closes can move lamports and are forbidden.
+    if (ix.programId.toBase58() !== LIGHTHOUSE_PROGRAM || ![6, 9, 10].includes(data[0]) || data.length < 3 || data.length > 1024 || ix.keys.length !== 1) return null;
+    const key = ix.keys[0], old = allowedAccounts.get(key.pubkey.toBase58());
+    if (!old || key.isSigner !== old.isSigner || key.isWritable !== old.isWritable) return null;
+  }
+  return { original, returned: returned.slice(0, original.length) };
+}
 
 export function claimBlockhashOnlyChange(original, signedMessage) {
   const reviewed = VersionedMessage.deserialize(original);
@@ -64,9 +81,10 @@ export function claimWalletAdjustment(original, signedMessage, { addressLookupTa
     const a = permissions(reviewed), b = permissions(signedMessage);
     const budgetKey = ComputeBudgetProgram.programId.toBase58();
     if ([...a].some(([key, flags]) => b.get(key) !== flags)) return false;
-    if ([...b].some(([key, flags]) => !a.has(key) && (key !== budgetKey || flags !== 'false:false'))) return false;
-    const claims = message => message.instructions.filter(instruction => !instruction.programId.equals(ComputeBudgetProgram.programId));
-    const first = claims(before), second = claims(after);
+    if ([...b].some(([key, flags]) => !a.has(key) && (![budgetKey, LIGHTHOUSE_PROGRAM].includes(key) || flags !== 'false:false'))) return false;
+    const guarded = guardedInstructions(before, after);
+    if (!guarded) return false;
+    const first = guarded.original, second = guarded.returned;
     if (first.length !== second.length || !first.length) return false;
     for (let i = 0; i < first.length; i++) {
       const x = first[i], y = second[i];

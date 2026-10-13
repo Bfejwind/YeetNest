@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'buffer';
-import { Keypair, SystemProgram, TransactionMessage, ComputeBudgetProgram, AddressLookupTableAccount } from '@solana/web3.js';
-import { claimBlockhashOnlyChange, claimWalletAdjustment, walletMessageReport } from '../src/claim-message.js';
+import { Keypair, PublicKey, SystemProgram, TransactionMessage, ComputeBudgetProgram, AddressLookupTableAccount, TransactionInstruction } from '@solana/web3.js';
+import { claimBlockhashOnlyChange, claimWalletAdjustment, walletMessageReport, LIGHTHOUSE_PROGRAM } from '../src/claim-message.js';
 
 test('creator claim accepts only a blockhash refresh, never changed amounts or recipients', () => {
   const owner = Keypair.generate().publicKey, recipient = Keypair.generate().publicKey;
@@ -13,6 +13,28 @@ test('creator claim accepts only a blockhash refresh, never changed amounts or r
   assert.equal(claimBlockhashOnlyChange(original, compile(oldHash)), false);
   assert.equal(claimBlockhashOnlyChange(original, compile(newHash, 2)), false);
   assert.equal(claimBlockhashOnlyChange(original, compile(newHash, 1, owner)), false);
+});
+
+test('Phantom Lighthouse guard from the reported claim is preserved and narrowly allowed', () => {
+  const owner = new PublicKey('BjE9givgn76we7v5tFAWe8km5wyP7cnaWDZqGm3ZGz5N');
+  const claim = new TransactionInstruction({ programId: new PublicKey('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'), data: Buffer.from('1416567bc61cdb84', 'hex'), keys: [
+    { pubkey: owner, isSigner: true, isWritable: true },
+    { pubkey: new PublicKey('BxeZhTCkYa1BcSnM5Gsx6hvtSzXpzzqpT2Rzp8SeykUV'), isSigner: false, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: new PublicKey('Ce6TQqeHC9p8KetsN6JsjHK7UTZk7nasjjnr7XxXp9F1'), isSigner: false, isWritable: false },
+    { pubkey: new PublicKey('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'), isSigner: false, isWritable: false },
+  ] });
+  const limit = ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 });
+  const guard = new TransactionInstruction({ programId: new PublicKey(LIGHTHOUSE_PROGRAM), data: Buffer.from('06040300e348580a000000000403000001000000000000000000', 'hex'), keys: [{ pubkey: owner, isSigner: true, isWritable: true }] });
+  const compile = instructions => new TransactionMessage({ payerKey: owner, recentBlockhash: Keypair.generate().publicKey.toBase58(), instructions }).compileToV0Message();
+  const reviewed = compile([limit, claim]).serialize();
+  const price = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 375000 });
+  assert.equal(claimWalletAdjustment(reviewed, compile([limit, price, claim, guard])), true);
+  const write = new TransactionInstruction({ ...guard, data: Buffer.from([0, 4, 3]) });
+  assert.equal(claimWalletAdjustment(reviewed, compile([limit, price, claim, write])), false);
+  assert.equal(claimWalletAdjustment(reviewed, compile([limit, price, guard, claim])), false);
+  const fake = new TransactionInstruction({ ...guard, programId: Keypair.generate().publicKey });
+  assert.equal(claimWalletAdjustment(reviewed, compile([limit, price, claim, fake])), false);
 });
 
 test('trade fee adjustment supports lookup tables but rejects changed lookup references and permissions', () => {

@@ -7,12 +7,13 @@ test('claim and sell accept bounded fee changes but reject economic changes befo
   await page.goto('/');
   const result = await page.evaluate(async () => {
     const chain = await import('/src/chain.js');
-    const { Keypair, SystemProgram, TransactionMessage, VersionedTransaction, ComputeBudgetProgram } = await import('/node_modules/.vite/deps/@solana_web3__js.js');
+    const { Keypair, PublicKey, SystemProgram, TransactionMessage, VersionedTransaction, ComputeBudgetProgram, TransactionInstruction } = await import('/node_modules/.vite/deps/@solana_web3__js.js');
     const owner = Keypair.generate(), recipient = Keypair.generate().publicKey;
     let alterAmount = false, broadcasts = 0;
     window.phantom = { solana: { connect: async () => ({ publicKey: owner.publicKey }), on: () => {}, signTransaction: async transaction => {
       const message = TransactionMessage.decompile(transaction.message);
       const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: 1400000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 400 }), SystemProgram.transfer({ fromPubkey: owner.publicKey, toPubkey: recipient, lamports: alterAmount ? 2 : 1 })];
+      instructions.push(new TransactionInstruction({ programId: new PublicKey('L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95'), data: Buffer.from('06040300e348580a000000000403000001000000000000000000', 'hex'), keys: [{ pubkey: owner.publicKey, isSigner: true, isWritable: true }] }));
       const signed = new VersionedTransaction(new TransactionMessage({ payerKey: owner.publicKey, recentBlockhash: message.recentBlockhash, instructions }).compileToV0Message());
       signed.sign([owner]); return signed;
     } } };
@@ -20,7 +21,11 @@ test('claim and sell accept bounded fee changes but reject economic changes befo
     chain.connection.getGenesisHash = async () => '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
     chain.connection.isBlockhashValid = async () => ({ value: true });
     chain.connection.getFeeForMessage = async () => ({ value: 5160 });
-    chain.connection.simulateTransaction = async () => ({ value: { err: null } });
+    chain.connection.simulateTransaction = async transaction => {
+      const instructions = TransactionMessage.decompile(transaction.message).instructions;
+      if (instructions.at(-1).programId.toBase58() !== 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95') throw new Error('Security guard was removed');
+      return { value: { err: null } };
+    };
     chain.connection.sendRawTransaction = async bytes => {
       broadcasts++;
       const bs58 = (await import('/node_modules/.vite/deps/bs58.js')).default;
