@@ -8,6 +8,22 @@ export function claimBlockhashOnlyChange(original, signedMessage) {
   return Buffer.from(reviewed.serialize()).equals(Buffer.from(signedMessage.serialize()));
 }
 
+export function walletMessageSummary(original, signed, addressLookupTableAccounts = []) {
+  try {
+    const reviewed = VersionedMessage.deserialize(original);
+    const decode = message => TransactionMessage.decompile(message, { addressLookupTableAccounts }).instructions;
+    const a = decode(reviewed), b = decode(signed);
+    const budget = instructions => instructions.filter(ix => ix.programId.equals(ComputeBudgetProgram.programId)).map(ix => {
+      const data = Buffer.from(ix.data);
+      return data[0] === 2 && data.length === 5 ? `units=${data.readUInt32LE(1)}` : data[0] === 3 && data.length === 9 ? `price=${data.readBigUInt64LE(1)}` : `tag=${data[0]}`;
+    }).join(',');
+    const economic = instructions => instructions.filter(ix => !ix.programId.equals(ComputeBudgetProgram.programId));
+    const first = economic(a), second = economic(b);
+    const identical = first.length === second.length && first.every((ix, i) => ix.programId.equals(second[i].programId) && Buffer.from(ix.data).equals(Buffer.from(second[i].data)) && ix.keys.length === second[i].keys.length && ix.keys.every((key, j) => key.pubkey.equals(second[i].keys[j].pubkey) && key.isSigner === second[i].keys[j].isSigner && key.isWritable === second[i].keys[j].isWritable));
+    return `version ${reviewed.version}->${signed.version}; claim/trade instructions ${identical ? 'unchanged' : 'changed'}; budget [${budget(a)}]->[${budget(b)}]`;
+  } catch { return 'message could not be safely decoded'; }
+}
+
 export function claimWalletAdjustment(original, signedMessage, { addressLookupTableAccounts = [], maxComputeUnits = 400000 } = {}) {
   try {
     const reviewed = VersionedMessage.deserialize(original);

@@ -1,5 +1,5 @@
 import { Buffer } from "buffer";
-import { claimWalletAdjustment } from './claim-message.js';
+import { claimWalletAdjustment, walletMessageSummary } from './claim-message.js';
 import {
   Connection,
   PublicKey,
@@ -175,7 +175,7 @@ async function validateWalletSignedMessage(original, signed, context) {
     if (!value) throw new Error('Transaction lookup table is unavailable. Nothing was broadcast.');
     tables.push(value);
   }
-  if (!claimWalletAdjustment(original, signed.message, { addressLookupTableAccounts: tables, maxComputeUnits: context.operation === 'creator-claim' ? 400000 : 1400000 })) throw new Error('Wallet changed reviewed transaction instructions, recipients or account permissions. Nothing was broadcast.');
+  if (!claimWalletAdjustment(original, signed.message, { addressLookupTableAccounts: tables, maxComputeUnits: 1400000 })) throw new Error(`Wallet adjustment rejected (${walletMessageSummary(original, signed.message, tables)}). Nothing was broadcast.`);
   const valid = await connection.isBlockhashValid(signed.message.recentBlockhash, 'confirmed');
   if (!valid.value) throw new Error('Wallet returned an expired transaction blockhash. Nothing was broadcast. Prepare again.');
   const fee = (await connection.getFeeForMessage(signed.message, 'confirmed')).value;

@@ -12,7 +12,7 @@ test('claim and sell accept bounded fee changes but reject economic changes befo
     let alterAmount = false, broadcasts = 0;
     window.phantom = { solana: { connect: async () => ({ publicKey: owner.publicKey }), on: () => {}, signTransaction: async transaction => {
       const message = TransactionMessage.decompile(transaction.message);
-      const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 400 }), SystemProgram.transfer({ fromPubkey: owner.publicKey, toPubkey: recipient, lamports: alterAmount ? 2 : 1 })];
+      const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: 1400000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 400 }), SystemProgram.transfer({ fromPubkey: owner.publicKey, toPubkey: recipient, lamports: alterAmount ? 2 : 1 })];
       const signed = new VersionedTransaction(new TransactionMessage({ payerKey: owner.publicKey, recentBlockhash: message.recentBlockhash, instructions }).compileToV0Message());
       signed.sign([owner]); return signed;
     } } };

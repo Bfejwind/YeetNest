@@ -40,4 +40,5 @@ test('claim wallet fee adjustment preserves instructions and permissions with bo
   assert.equal(claimWalletAdjustment(original, compile([limit, price, price, claim])), false);
   assert.equal(claimWalletAdjustment(original, compile([limit, ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 100000000 }), claim])), false);
   assert.equal(claimWalletAdjustment(original, compile([ComputeBudgetProgram.setComputeUnitLimit({ units: 1400000 }), price, claim])), false);
+  assert.equal(claimWalletAdjustment(original, compile([ComputeBudgetProgram.setComputeUnitLimit({ units: 1400000 }), price, claim]), { maxComputeUnits: 1400000 }), true);
 });
