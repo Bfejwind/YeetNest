@@ -166,25 +166,26 @@ async function assertMainnet() {
     throw new Error("The configured RPC is not Solana mainnet.");
 }
 
-export async function submitAndConfirm(transaction, context = {}, onSubmitted = () => {}) {
-  await withTimeout(() => assertMainnet(), 30000, 'Mainnet RPC check timed out before signing. Check the RPC connection; no transaction was submitted by this request.');
-  const owner = publicKey.toBase58();
-  const signer = provider;
-  const original = Buffer.from(transaction.message.serialize());
-  const signed = await withTimeout(() => signer.signTransaction(transaction), 60000, 'Wallet transaction signing timed out. No transaction was broadcast by this request. Close the pending wallet prompt and recheck wallet activity before preparing again.');
-  if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during signing.');
-  if (!Buffer.from(signed.message.serialize()).equals(original)) {
-    if (context.operation !== 'creator-claim' || context.protocol !== 'pump' || !claimWalletAdjustment(original, signed.message)) {
-      throw new Error('Wallet changed the reviewed transaction instructions or account permissions. Nothing was broadcast. Disable wallet transaction modifications and prepare again.');
-    }
-    const valid = await connection.isBlockhashValid(signed.message.recentBlockhash, 'confirmed');
-    if (!valid.value) throw new Error('Wallet returned an expired claim blockhash. Nothing was broadcast. Prepare again.');
-    const fee = (await connection.getFeeForMessage(signed.message, 'confirmed')).value;
-    if (fee === null || fee > 10000000) throw new Error('Wallet-adjusted claim fee exceeds the 0.01 SOL cap or is unavailable. Nothing was broadcast.');
-    const check = await connection.simulateTransaction(signed, { sigVerify: true, commitment: 'confirmed' });
-    if (check.value.err) throw new Error(`Signed creator claim failed simulation: ${JSON.stringify(check.value.err)}. Nothing was broadcast.`);
-    if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during claim validation. Nothing was broadcast.');
+async function validateWalletSignedMessage(original, signed, context) {
+  if (Buffer.from(signed.message.serialize()).equals(original)) return false;
+  if (!['creator-claim', 'trade', 'swap', 'buy', 'sell', 'initial-buy'].includes(context.operation) || signed.message.header.numRequiredSignatures !== 1) throw new Error('Wallet modified a transaction that cannot be safely adjusted. Nothing was broadcast. Prepare a fresh transaction.');
+  const tables = [];
+  for (const lookup of signed.message.addressTableLookups || []) {
+    const { value } = await connection.getAddressLookupTable(lookup.accountKey);
+    if (!value) throw new Error('Transaction lookup table is unavailable. Nothing was broadcast.');
+    tables.push(value);
   }
+  if (!claimWalletAdjustment(original, signed.message, { addressLookupTableAccounts: tables, maxComputeUnits: context.operation === 'creator-claim' ? 400000 : 1400000 })) throw new Error('Wallet changed reviewed transaction instructions, recipients or account permissions. Nothing was broadcast.');
+  const valid = await connection.isBlockhashValid(signed.message.recentBlockhash, 'confirmed');
+  if (!valid.value) throw new Error('Wallet returned an expired transaction blockhash. Nothing was broadcast. Prepare again.');
+  const fee = (await connection.getFeeForMessage(signed.message, 'confirmed')).value;
+  if (fee === null || fee > 10000000) throw new Error('Wallet-adjusted transaction fee exceeds the 0.01 SOL cap or is unavailable. Nothing was broadcast.');
+  const check = await connection.simulateTransaction(signed, { sigVerify: true, commitment: 'confirmed' });
+  if (check.value.err) throw new Error(`Wallet-adjusted transaction failed simulation: ${JSON.stringify(check.value.err)}. Nothing was broadcast.`);
+  return true;
+}
+
+async function broadcastAndConfirm(signed, owner, context, onSubmitted = () => {}) {
   const signature = bs58.encode(signed.signatures[0]);
   const existing = readTransactions().find(row => row.signature === signature);
   if (existing) throw new TransactionOutcomeError(signature, existing.state, 'This signed transaction was already attempted.');
@@ -198,6 +199,18 @@ export async function submitAndConfirm(transaction, context = {}, onSubmitted = 
     throw new TransactionOutcomeError(signature, 'unknown', 'Broadcast outcome is unknown.');
   }
   return pollTransaction(connection, signature, { onState: state => recordTransaction({ signature, state }) });
+}
+
+export async function submitAndConfirm(transaction, context = {}, onSubmitted = () => {}) {
+  await withTimeout(() => assertMainnet(), 30000, 'Mainnet RPC check timed out before signing. Check the RPC connection; no transaction was submitted by this request.');
+  const owner = publicKey.toBase58();
+  const signer = provider;
+  const original = Buffer.from(transaction.message.serialize());
+  const signed = await withTimeout(() => signer.signTransaction(transaction), 60000, 'Wallet transaction signing timed out. No transaction was broadcast by this request. Close the pending wallet prompt and recheck wallet activity before preparing again.');
+  if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during signing.');
+  await validateWalletSignedMessage(original, signed, context);
+  if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during transaction validation. Nothing was broadcast.');
+  return broadcastAndConfirm(signed, owner, context, onSubmitted);
 }
 
 export async function recoverTransactions() {
@@ -255,10 +268,11 @@ export async function prepareSwap(coin, side, amount, slippageBps = 100) {
         throw new Error("Quote expired. Request a fresh quote.");
       used = true;
       const signer = provider;
-      const signed = await signer.signTransaction(tx);
+      const signed = await withTimeout(() => signer.signTransaction(tx), 60000, 'Wallet signing timed out. No swap was broadcast by this request.');
       if (publicKey?.toBase58() !== taker || provider !== signer) throw new Error('Wallet changed during signing.');
-      if (!Buffer.from(signed.message.serialize()).equals(message))
-        throw new Error("Wallet changed the transaction message.");
+      const adjusted = await validateWalletSignedMessage(message, signed, { operation: 'swap', protocol: 'jupiter' });
+      if (publicKey?.toBase58() !== taker || provider !== signer) throw new Error('Wallet changed during swap validation. Nothing was broadcast.');
+      if (adjusted) return broadcastAndConfirm(signed, taker, { operation: 'swap', protocol: 'jupiter', mint: coin.mint, side });
       const signature = bs58.encode(signed.signatures[0]);
       recordTransaction({ signature, wallet: taker, state: 'submitted', network: 'mainnet-beta' });
       let result;

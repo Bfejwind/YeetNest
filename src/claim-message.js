@@ -8,15 +8,19 @@ export function claimBlockhashOnlyChange(original, signedMessage) {
   return Buffer.from(reviewed.serialize()).equals(Buffer.from(signedMessage.serialize()));
 }
 
-export function claimWalletAdjustment(original, signedMessage) {
+export function claimWalletAdjustment(original, signedMessage, { addressLookupTableAccounts = [], maxComputeUnits = 400000 } = {}) {
   try {
     const reviewed = VersionedMessage.deserialize(original);
-    if (reviewed.version !== signedMessage.version || reviewed.addressTableLookups?.length || signedMessage.addressTableLookups?.length) return false;
-    const before = TransactionMessage.decompile(reviewed), after = TransactionMessage.decompile(signedMessage);
+    if (reviewed.version !== signedMessage.version) return false;
+    const lookups = message => (message.addressTableLookups || []).map(table => ({ key: table.accountKey.toBase58(), writable: [...table.writableIndexes], readonly: [...table.readonlyIndexes] }));
+    if (JSON.stringify(lookups(reviewed)) !== JSON.stringify(lookups(signedMessage))) return false;
+    const before = TransactionMessage.decompile(reviewed, { addressLookupTableAccounts }), after = TransactionMessage.decompile(signedMessage, { addressLookupTableAccounts });
     if (!before.payerKey.equals(after.payerKey) || reviewed.header.numRequiredSignatures !== signedMessage.header.numRequiredSignatures) return false;
     const permissions = message => new Map(message.staticAccountKeys.map((key, i) => [key.toBase58(), `${message.isAccountSigner(i)}:${message.isAccountWritable(i)}`]));
     const a = permissions(reviewed), b = permissions(signedMessage);
-    if (a.size !== b.size || [...a].some(([key, flags]) => b.get(key) !== flags)) return false;
+    const budgetKey = ComputeBudgetProgram.programId.toBase58();
+    if ([...a].some(([key, flags]) => b.get(key) !== flags)) return false;
+    if ([...b].some(([key, flags]) => !a.has(key) && (key !== budgetKey || flags !== 'false:false'))) return false;
     const claims = message => message.instructions.filter(instruction => !instruction.programId.equals(ComputeBudgetProgram.programId));
     const first = claims(before), second = claims(after);
     if (first.length !== second.length || !first.length) return false;
@@ -35,6 +39,6 @@ export function claimWalletAdjustment(original, signedMessage) {
       else if (tag === 3 && data.length === 9) price = data.readBigUInt64LE(1);
       else return false;
     }
-    return units > 0 && units <= 400000 && (BigInt(units) * price + 999999n) / 1000000n <= 10000000n;
+    return units > 0 && units <= maxComputeUnits && (BigInt(units) * price + 999999n) / 1000000n <= 10000000n;
   } catch { return false; }
 }
