@@ -778,7 +778,7 @@ export function createApi({
       progress: row.progress !== null ? Number(row.progress) : Number(row.target) > 0 ? Math.min(100, Number(row.raised) / Number(row.target) * 100) : 0,
       raised: row.raised, target: row.target, supplyRaw: row.supply, created: row.created === null ? null : Number(row.created), updatedAt: Number(row.updated), slot: Number(row.slot),
     })), available: true, hasMore, nextCursor, offset, indexProtocol, indexedAt: state?.updatedAt || null,
-      indexerError: jobs?.failed ? 'INDEXING_JOBS_FAILED' : state?.error || null, jobs,
+      indexerError: state?.error || swapState?.error || (jobs?.failed ? 'INDEXING_JOBS_FAILED' : null), jobs,
       historyScope: indexProtocol === 'pump' ? 'pump-and-pumpswap' : indexProtocol, historyComplete: Boolean(state?.backfillComplete && (indexProtocol !== 'pump' || swapState?.backfillComplete) && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
   }));
   app.get('/api/candles/:mint', route(async (req, res) => res.json(await localChart(address(req.params.mint), req.query))));

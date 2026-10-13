@@ -573,7 +573,11 @@ async function refreshLive(background = false) {
       );
   liveCoins = [...merged.values()];
   liveError = results.filter(result => result.status === 'rejected').map(result => result.reason.message).join(' ');
-  if (results[2].status === 'fulfilled' && results[2].value.indexerError) liveError += ' LaunchLab indexing is paused at a provider error; indexed history is incomplete.';
+  if (results[2].status === 'fulfilled' && results[2].value.indexerError) {
+    const status = results[2].value;
+    const protocol = status.indexProtocol === 'raydium' ? 'LaunchLab' : 'Pump/PumpSwap';
+    liveError += ` ${protocol} history is incomplete: ${status.indexerError}.${status.jobs?.failed ? ` ${status.jobs.failed} jobs require review and retry.` : ''} Check worker logs and /api/indexer/status.`;
+  }
   loading = false;
   lastUpdated = results[0].status === "fulfilled" ? Date.now() : lastUpdated;
   if (mode === "live" && !document.querySelector(".overlay")) {

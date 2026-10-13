@@ -15,6 +15,7 @@ import { PUMP_PROGRAM } from './pump-events.js';
 import { indexPumpTransaction } from './pump-indexer.js';
 import { indexPumpSwapTransaction, PUMPSWAP_PROGRAM } from './pumpswap-indexer.js';
 import { createRateSampler } from './chart-rates.js';
+import { indexerErrorCode } from './indexer-error.js';
 
 if (!process.env.DATABASE_URL || !process.env.SOLANA_RPC_URL) throw new Error('Indexer requires DATABASE_URL and SOLANA_RPC_URL.');
 const settings = indexerSettings(process.env);
@@ -65,6 +66,7 @@ try {
   let state = (await records.get(checkpoint))[0] || {};
   let leader = false;
   async function scanOnce() {
+    let activeCheckpoint = checkpoint;
     if (settings.role === 'process' || stopping) return;
     if (!leader) {
       const result = await lock.query('SELECT pg_try_advisory_lock($1) AS acquired', [protocol === 'pump' ? 741924 : 741922]);
@@ -77,6 +79,7 @@ try {
       if (stats.pending + stats.processing >= settings.maxJobs) return;
       await sampleRate().catch(() => console.error('Chart USD rate unavailable; SOL indexing continues.'));
       for (const scan of scanPrograms) {
+      activeCheckpoint = scan.key;
       state = (await records.get(scan.key))[0] || {};
       for (const backfill of [false, true]) {
         if (stopping) break;
@@ -87,8 +90,8 @@ try {
       }
       }
     } catch (error) {
-      await records.mutate(checkpoint, entries => { entries.splice(0, entries.length, { ...state, updatedAt: Date.now(), error: typeof error.code === 'number' ? error.code : 'INDEXER_RETRY' }); }).catch(() => {});
-      console.error('Indexer checkpoint retained for retry.', error.name, typeof error.code === 'number' || /^[A-Z0-9_]{1,30}$/.test(String(error.code)) ? error.code : 'NO_CODE');
+      await records.mutate(activeCheckpoint, entries => { entries.splice(0, entries.length, { ...state, updatedAt: Date.now(), error: indexerErrorCode(error) }); }).catch(() => {});
+      console.error('Indexer checkpoint retained for retry.', activeCheckpoint, indexerErrorCode(error));
       if (process.env.INDEXER_ONCE === 'true') process.exitCode = 1;
     }
   }
@@ -102,8 +105,8 @@ try {
       await processSignature(job.payload);
       if (!await queue.complete(job)) console.error('Indexer lease expired; replay remains deduplicated.');
     } catch (error) {
-      await queue.fail(job, typeof error.code === 'number' ? error.code : 'PROCESSING_ERROR');
-      console.error('Indexing job retained for retry.', typeof error.code === 'number' ? error.code : 'PROCESSING_ERROR');
+      await queue.fail(job, indexerErrorCode(error));
+      console.error('Indexing job retained for retry.', indexerErrorCode(error));
       if (process.env.INDEXER_ONCE === 'true') process.exitCode = 1;
     } finally { clearInterval(heartbeat); }
     return true;
