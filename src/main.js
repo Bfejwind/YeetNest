@@ -640,9 +640,18 @@ function toast(message) {
   setTimeout(() => e.classList.remove("show"), 5000);
 }
 function inlineError(error) {
+  document.querySelector('#copy-signing-error')?.remove();
   const node = document.querySelector("#form-error");
   if (node) node.textContent = error.message || String(error);
   else toast(error.message || String(error));
+  if (node && error.diagnostic) {
+    const button = document.createElement('button'); button.type = 'button'; button.id = 'copy-signing-error'; button.className = 'secondary full'; button.textContent = 'Copy transaction error details';
+    button.onclick = async () => {
+      try { await navigator.clipboard.writeText(JSON.stringify(error.diagnostic, null, 2)); button.textContent = 'Copied'; }
+      catch { toast('Clipboard unavailable.'); }
+    };
+    node.after(button);
+  }
 }
 function walletModal() {
   if (connected()) {

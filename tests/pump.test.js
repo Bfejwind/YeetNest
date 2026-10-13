@@ -19,13 +19,14 @@ test('creator claim omits empty AMM accounts and resimulates before wallet signi
   } }, connection: {
     getLatestBlockhash: async () => ({ blockhash: Keypair.generate().publicKey.toBase58() }),
     getFeeForMessage: async () => ({ value: 5000 }), getMinimumBalanceForRentExemption: async () => 10000000,
-    getBalance: async () => 100000000, simulateTransaction: async transaction => {
+    getBalance: async () => 5000, simulateTransaction: async transaction => {
       simulations++;
       assert.equal(TransactionMessage.decompile(transaction.message).instructions.length, 2);
       return { value: { err: failSimulation ? 'controlled failure' : null } };
     },
   }, submit: async () => { submissions++; return 'controlled-claim'; } };
   const claim = await preparePumpCreatorClaim(context);
+  assert.equal(claim.rentReserve, '0');
   assert.equal(await claim.execute(), 'controlled-claim');
   assert.equal(simulations, 2); assert.equal(submissions, 1);
   const rejected = await preparePumpCreatorClaim(context);

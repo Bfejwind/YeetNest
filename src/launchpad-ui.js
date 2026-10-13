@@ -287,6 +287,14 @@ function creatorStudio(context) {
             } catch (error) {
               document.querySelector("#claim-error").textContent =
                 error.message;
+              if (error.diagnostic && document.querySelector('#claim-error')) {
+                const copy = document.createElement('button'); copy.type = 'button'; copy.className = 'secondary full'; copy.textContent = 'Copy claim error details';
+                copy.onclick = async () => {
+                  try { await navigator.clipboard.writeText(JSON.stringify(error.diagnostic, null, 2)); copy.textContent = 'Copied'; }
+                  catch { toast('Clipboard unavailable.'); }
+                };
+                document.querySelector('#claim-error').after(copy);
+              }
             }
           };
         },

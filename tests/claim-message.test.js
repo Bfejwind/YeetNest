@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Buffer } from 'buffer';
 import { Keypair, SystemProgram, TransactionMessage, ComputeBudgetProgram, AddressLookupTableAccount } from '@solana/web3.js';
-import { claimBlockhashOnlyChange, claimWalletAdjustment } from '../src/claim-message.js';
+import { claimBlockhashOnlyChange, claimWalletAdjustment, walletMessageReport } from '../src/claim-message.js';
 
 test('creator claim accepts only a blockhash refresh, never changed amounts or recipients', () => {
   const owner = Keypair.generate().publicKey, recipient = Keypair.generate().publicKey;
@@ -37,6 +37,10 @@ test('claim wallet fee adjustment preserves instructions and permissions with bo
   const price = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 400 });
   assert.equal(claimWalletAdjustment(original, compile([limit, price, claim])), true);
   assert.equal(claimWalletAdjustment(original, compile([limit, price, SystemProgram.transfer({ fromPubkey: owner, toPubkey: recipient, lamports: 2 })])), false);
+  const report = walletMessageReport(original, compile([limit, price, SystemProgram.transfer({ fromPubkey: owner, toPubkey: recipient, lamports: 2 })]));
+  assert.match(report.summary, /data changed/);
+  assert.equal('signatures' in report.returned, false);
+  assert.equal('blockhash' in report.returned, false);
   assert.equal(claimWalletAdjustment(original, compile([limit, price, price, claim])), false);
   assert.equal(claimWalletAdjustment(original, compile([limit, ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 100000000 }), claim])), false);
   assert.equal(claimWalletAdjustment(original, compile([ComputeBudgetProgram.setComputeUnitLimit({ units: 1400000 }), price, claim])), false);

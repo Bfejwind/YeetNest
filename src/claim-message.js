@@ -38,6 +38,20 @@ export function walletMessageSummary(original, signed, addressLookupTableAccount
   } catch { return 'message could not be safely decoded'; }
 }
 
+export function walletMessageReport(original, signed, addressLookupTableAccounts = []) {
+  const describe = message => ({
+    version: message.version,
+    requiredSignatures: message.header.numRequiredSignatures,
+    instructions: TransactionMessage.decompile(message, { addressLookupTableAccounts }).instructions.map(instruction => ({
+      program: instruction.programId.toBase58(),
+      dataHex: Buffer.from(instruction.data).toString('hex').slice(0, 1024),
+      dataBytes: instruction.data.length,
+      accounts: instruction.keys.map(key => ({ address: key.pubkey.toBase58(), signer: key.isSigner, writable: key.isWritable })),
+    })),
+  });
+  return { summary: walletMessageSummary(original, signed, addressLookupTableAccounts), reviewed: describe(VersionedMessage.deserialize(original)), returned: describe(signed) };
+}
+
 export function claimWalletAdjustment(original, signedMessage, { addressLookupTableAccounts = [], maxComputeUnits = 400000 } = {}) {
   try {
     const reviewed = VersionedMessage.deserialize(original);

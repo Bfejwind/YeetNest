@@ -20,6 +20,7 @@ export async function pumpCreatorFeeBalance(context) {
 export async function preparePumpCreatorClaim(context) {
   const pump = await sdk(context.connection, context.pumpSdk), owner = context.wallet();
   const balance = await pumpCreatorFeeBalance(context);
+  if (!context.wallet()?.equals(owner)) throw new Error('Wallet changed while loading creator fees. Prepare again.');
   if (balance.amount === '0') throw new Error('No collected Pump/PumpSwap SOL creator fees are available. Unswept curve/pool fees are not included.');
   const curveBalance = await pump.online.getCreatorVaultBalance(owner);
   const total = new BN(toUnits(balance.amount, 9));
@@ -28,6 +29,7 @@ export async function preparePumpCreatorClaim(context) {
     if (instruction.programId.equals(pump.PUMP_PROGRAM_ID)) return !curveBalance.isZero();
     return hasAmmFees && !(instruction.programId.toBase58() === TOKEN && instruction.data[0] === 9);
   });
+  if (!context.wallet()?.equals(owner)) throw new Error('Wallet changed while preparing creator fees. Prepare again.');
   const built = await preparedTransaction(context, instructions, { refreshBeforeSigning: true, record: { operation: 'creator-claim', protocol: 'pump' } });
   return { ...built, ...balance };
 }
@@ -42,7 +44,10 @@ async function preparedTransaction(context, instructions, { signers = [], spend 
   const fee = (await connection.getFeeForMessage(transaction.message, 'confirmed')).value;
   if (fee === null || fee > 10000000) throw new Error('Pump network fee is unavailable or exceeds the 0.01 SOL cap.');
   // Reserve rent for creation/Token-2022/volume accounts; simulation validates the actual requirements.
-  const rentReserve = BigInt(await connection.getMinimumBalanceForRentExemption(4096));
+  const claimAccounts = instructions.filter(ix => ix.programId.toBase58() === 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL').length;
+  const rentReserve = record.operation === 'creator-claim'
+    ? claimAccounts ? BigInt(await connection.getMinimumBalanceForRentExemption(165)) * BigInt(claimAccounts) : 0n
+    : BigInt(await connection.getMinimumBalanceForRentExemption(4096));
   if (BigInt(await connection.getBalance(new PublicKey(owner))) < spend + rentReserve + BigInt(fee)) throw new Error('Insufficient SOL for the input, network fee and account rent reserve.');
   const simulation = await connection.simulateTransaction(transaction);
   if (simulation.value.err) throw new Error(`Pump simulation failed: ${JSON.stringify(simulation.value.err)}`);
