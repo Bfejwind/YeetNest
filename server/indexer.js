@@ -16,11 +16,15 @@ import { indexPumpTransaction } from './pump-indexer.js';
 import { indexPumpSwapTransaction, PUMPSWAP_PROGRAM } from './pumpswap-indexer.js';
 import { createRateSampler } from './chart-rates.js';
 import { indexerErrorCode } from './indexer-error.js';
+import { pacedRpcFetch } from './indexer-rpc-fetch.js';
 
 if (!process.env.DATABASE_URL || !process.env.SOLANA_RPC_URL) throw new Error('Indexer requires DATABASE_URL and SOLANA_RPC_URL.');
 const settings = indexerSettings(process.env);
 const shutdown = new AbortController();
-const connection = new Connection(process.env.SOLANA_RPC_URL, { commitment: 'finalized', disableRetryOnRateLimit: true, fetch: (url, options) => fetch(url, { ...options, signal: AbortSignal.any([shutdown.signal, AbortSignal.timeout(25000)]) }) });
+const requestInterval = Number(process.env.INDEXER_RPC_INTERVAL_MS || 1000);
+if (!Number.isInteger(requestInterval) || requestInterval < 100 || requestInterval > 60000) throw new Error('INDEXER_RPC_INTERVAL_MS must be between 100 and 60000.');
+const rpcFetch = pacedRpcFetch({ interval: requestInterval, signal: shutdown.signal, fetcher: (url, options) => fetch(url, { ...options, signal: AbortSignal.any([shutdown.signal, AbortSignal.timeout(25000)]) }) });
+const connection = new Connection(process.env.SOLANA_RPC_URL, { commitment: 'finalized', disableRetryOnRateLimit: true, fetch: rpcFetch });
 const protocol = process.env.INDEXER_PROTOCOL || 'pump';
 if (!['pump', 'raydium'].includes(protocol)) throw new Error('INDEXER_PROTOCOL must be pump or raydium.');
 const checkpoint = protocol === 'pump' ? 'pump-indexer' : 'launchlab-indexer';

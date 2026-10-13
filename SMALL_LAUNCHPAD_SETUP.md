@@ -128,6 +128,10 @@ The preflight prints presence/configuration checks, never secret values. It does
 
 ## 8. Operate The Pilot
 
+### RPC Rate-Limit Recovery
+
+The worker now paces all its RPC calls with `INDEXER_RPC_INTERVAL_MS` (default 1000 milliseconds) and observes bounded HTTP 429 cooldowns. This is per worker process, not a shared quota across web/worker replicas. In Render worker Environment, start recovery with INDEXER_CONCURRENCY=1, INDEXER_PAGE_SIZE=25, INDEXER_SCAN_INTERVAL_MS=15000 and INDEXER_RPC_INTERVAL_MS=2000. Save and deploy the latest code. Watch RPC quota usage and `/api/indexer/status` before requeueing failed jobs. Slower settings reduce requests but increase catch-up time and cannot fix exhausted daily credits. Check the provider plan and account usage, including traffic from the web service using the same key. After the cause is resolved, use `npm run indexer:jobs -- failed`, then `npm run indexer:jobs -- retry SIGNATURE` for a small sample in Render worker Shell. Never delete checkpoints or blanket-retry thousands of jobs while rate-limited.
+
 Check Render Logs/Metrics, database storage/connections, RPC quotas and worker queue daily. Enable service-failure notifications, provider quota/spend alerts and external uptime monitoring of `/readyz`. Keep an incident contact and user-visible support channel. If transaction construction/simulation behaves unexpectedly, pause new user onboarding and investigate; do not ask users to sign unsafe transactions.
 
 Test a controlled service/worker restart and a database restore. Set moderation, terms, privacy, retention and jurisdiction-appropriate legal policies. Larger visitor counts require shared caches, scalable updates and measured load tests; do not increase all concurrency settings blindly.
