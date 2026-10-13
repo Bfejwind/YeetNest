@@ -16,6 +16,15 @@ export function createIndexerQueue(databaseUrl, { now = Date.now, leaseMs = 1200
     heartbeat: async (id, role) => { await pool.query('INSERT INTO indexer_workers(id,queue_name,role,updated) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET updated=EXCLUDED.updated', [id, name, role, now()]); },
     workers: async () => (await pool.query('SELECT id,role,updated FROM indexer_workers WHERE queue_name=$1 AND updated>$2 ORDER BY updated DESC LIMIT 100', [name, now() - 90000])).rows,
     failed: async () => (await pool.query("SELECT signature,attempts,error_code,updated FROM indexer_jobs WHERE queue_name=$1 AND status='failed' ORDER BY updated,signature LIMIT 100", [name])).rows,
+    status: async signature => (await pool.query('SELECT signature,status,attempts,error_code,updated FROM indexer_jobs WHERE queue_name=$1 AND signature=$2', [name, signature])).rows[0] || null,
+    retryFailed: async (limit = 10) => {
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Retry batch must be between 1 and 100.');
+      return (await pool.query(`WITH selected AS (
+        SELECT signature FROM indexer_jobs WHERE queue_name=$1 AND status='failed'
+        ORDER BY updated,signature LIMIT $2 FOR UPDATE SKIP LOCKED
+      ) UPDATE indexer_jobs SET status='pending',attempts=0,error_code=NULL,lease_until=NULL,lease_token=NULL,available_at=$3,updated=$3
+        WHERE queue_name=$1 AND status='failed' AND signature IN (SELECT signature FROM selected)`, [name, limit, now()])).rowCount;
+    },
     retry: async signature => (await pool.query("UPDATE indexer_jobs SET status='pending',attempts=0,error_code=NULL,lease_until=NULL,lease_token=NULL,available_at=$3,updated=$3 WHERE queue_name=$1 AND signature=$2 AND status='failed'", [name, signature, now()])).rowCount === 1,
     prune: async () => {
       const cutoff = now() - 7 * 86400000;
