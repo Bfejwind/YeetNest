@@ -153,6 +153,14 @@
 .live-environment { color: #ffd52a; font-size: 10px; white-space: nowrap; }
 .candle-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); padding: 8px 0; }
 .token-chart { height: 340px; }
+.token-overlay { padding: 16px; }
+.token-modal { width: min(1040px, 100%); max-height: calc(100dvh - 32px); padding: 52px 32px 32px; }
+.token-overlay .close { position: fixed; top: 12px; right: 12px; z-index: 20; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+@media (max-width: 600px) {
+  .token-overlay { padding: 8px; }
+  .token-modal { max-height: calc(100dvh - 16px); padding: 56px 16px 20px; }
+  .token-overlay .close { top: 8px; right: 8px; }
+}
 .missing-coin-art { display: inline-flex; width: 48px; height: 48px; flex-shrink: 0; align-items: center; justify-content: center; background: var(--surface); color: var(--muted); border: 1px solid var(--border); font-size: 20px; }
 .external-token-chart { display: block; width: 100%; height: 460px; min-width: 0; border: 0; background: var(--surface); }
 .candle-options { display: flex; flex-wrap: wrap; gap: 12px; padding: 10px 0; }

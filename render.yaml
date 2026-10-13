@@ -23,7 +23,7 @@ services:
       - key: DATABASE_URL
         sync: false
       - key: SOLANA_RPC_URL
-        value: https://api.mainnet-beta.solana.com
+        sync: false
       - key: JUPITER_API_KEY
         sync: false
       - key: PINATA_JWT

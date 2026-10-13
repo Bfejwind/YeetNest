@@ -354,6 +354,14 @@ export async function mountMarket(coin, { esc }) {
     indexed ||= Boolean(result.indexed);
     curve ||= indexed;
     if (!root.isConnected || cancelled) return;
+    if (!coin.externalChart && curve && !result.candles?.length) {
+      return mountMarket({ ...coin, externalChart: true }, { esc });
+    }
+    if (!curve && !result.pair) {
+      result.pair = { pairAddress: coin.mint, dexId: 'Token history' };
+      result.chartProvider = 'geckoterminal-embed';
+      result.chartLookup = 'token';
+    }
     const pair = result.pair;
     if (!curve && !pair) {
       root.innerHTML = `<p class="fine">${esc(result.chartError)}</p>`;
@@ -386,8 +394,6 @@ export async function mountMarket(coin, { esc }) {
       if (!result.candles?.length) {
         root.querySelector('.fine')?.remove();
         const note = document.createElement('p'); note.className = 'fine'; note.textContent = preferences.currency === 'USD' ? 'No indexed trades with recorded USD rates in this range. Switch to SOL.' : 'No trades indexed in this range yet. Check worker progress.'; root.append(note);
-        const fallback = document.createElement('button'); fallback.type = 'button'; fallback.className = 'source-link'; fallback.textContent = 'View provider chart';
-        fallback.onclick = () => mountMarket({ ...coin, externalChart: true }, { esc }); root.append(fallback);
       }
       const options = document.createElement('div'); options.className = 'candle-options';
       options.innerHTML = `<label>Currency<select aria-label="Chart currency"><option>SOL</option><option>USD</option></select></label><label>View<select aria-label="Chart metric"><option value="price">Price</option><option value="fdv">FDV</option></select></label><label>History<select aria-label="Chart history"><option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></label>`;
@@ -420,6 +426,7 @@ export async function mountMarket(coin, { esc }) {
         candles.set(time, { time, open, high, low, close });
     }
     if (!candles.size) {
+      if (!coin.externalChart) return mountMarket({ ...coin, externalChart: true }, { esc });
       document.querySelector("#token-chart").remove();
       return;
     }
@@ -515,9 +522,8 @@ export async function mountMarket(coin, { esc }) {
     };
   } catch (error) {
     if (root.isConnected && !cancelled) {
+      if (!coin.externalChart) return mountMarket({ ...coin, externalChart: true }, { esc });
       root.innerHTML = `<p class="fine">${esc(error.message)}</p>`;
-      const fallback = document.createElement('button'); fallback.type = 'button'; fallback.className = 'source-link'; fallback.textContent = 'View provider chart';
-      fallback.onclick = () => mountMarket({ ...coin, externalChart: true }, { esc }); root.append(fallback);
     }
   }
 }

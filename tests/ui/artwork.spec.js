@@ -1,6 +1,20 @@
 import { test, expect } from '@playwright/test';
 import { Keypair } from '@solana/web3.js';
 
+test('rate limited IPFS artwork retries the same content on another gateway', async ({ page }) => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  await page.route('**/api/status', route => route.fulfill({ json: { network: 'mainnet-beta' } }));
+  await page.route('**/api/tokens*', route => route.fulfill({ json: [{ id: mint, name: 'IPFS Art', symbol: 'IPFS', decimals: 6, usdPrice: 1, icon: 'https://ipfs.io/ipfs/QmExample/logo.png' }] }));
+  await page.route('**/api/launches*', route => route.fulfill({ json: [] }));
+  await page.route('**/api/artwork?*', route => route.fulfill({ status: 429, body: '' }));
+  await page.route('https://ipfs.io/**', route => route.fulfill({ status: 429, body: '' }));
+  await page.route('https://gateway.pinata.cloud/ipfs/QmExample/logo.png', route => route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jV1sAAAAASUVORK5CYII=', 'base64') }));
+  await page.goto('/');
+  const img = page.locator('.coin img').first();
+  await expect(img).toHaveAttribute('src', 'https://gateway.pinata.cloud/ipfs/QmExample/logo.png', { timeout: 15000 });
+  await expect.poll(() => img.evaluate(element => element.complete && element.naturalWidth > 0)).toBe(true);
+});
+
 test('metadata artwork retries direct delivery before abandoning an available image', async ({ page }) => {
   const mint = Keypair.generate().publicKey.toBase58();
   await page.route('**/api/status', route => route.fulfill({ json: { network: 'mainnet-beta' } }));

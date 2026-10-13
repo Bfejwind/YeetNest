@@ -1,6 +1,7 @@
 import { createIcons, icons } from "./ui-icons.js";
 import brandLogo from '../logo.png';
 import { isRealCoin, mergeCoin } from './coin-catalogue.js';
+import { artworkGateways } from './artwork-gateways.js';
 import * as chain from "./chain.js";
 import { fromUnits, toUnits } from "./amounts.js";
 import { installLaunchpadUI, mountMarket, cleanupMarket, reviewInitialPurchase } from "./launchpad-ui.js";
@@ -1010,6 +1011,8 @@ function detail(id) {
     () => {
       if (owns)
         document.querySelector("#edit-art").onclick = () => editArtwork(coin);
+      document.querySelector('.modal').classList.add('token-modal');
+      document.querySelector('.overlay').classList.add('token-overlay');
       if (mode === 'live' && coin.protocol === 'pump') document.querySelector('#trade-form .fine').textContent = 'Pump bonding curve until completion; canonical PumpSwap pool after migration. Review the quote before signing.';
       if (mode === 'live' && !coin.description && coin.uri && coin.mint) {
         const description = document.querySelector('.coin-description');
@@ -1059,10 +1062,12 @@ function detail(id) {
         const evidence = document.querySelector('#token-evidence');
         chain.api(`/trades/${coin.mint}`).then(result => {
           if (!evidence.isConnected) return;
+          result.trades = (result.trades || []).slice(0, 5);
           evidence.querySelector('#recent-trades').innerHTML = result.trades.map(trade => `<div class="health-check"><div><b>${esc(trade.kind)}</b><span>${esc(trade.block_timestamp || '')}</span></div><a href="https://solscan.io/tx/${esc(trade.tx_hash)}" target="_blank" rel="noopener noreferrer">${esc(String(trade.tx_hash).slice(0, 10))}</a><small>${trade.volume_in_usd ? esc(trade.volume_in_usd) + ' USD' : '--'}</small></div>`).join('') || '<p class="muted">No indexed trades available.</p>';
         }).catch(() => { if (evidence.isConnected) evidence.querySelector('#recent-trades').textContent = 'Recent trade data unavailable.'; });
         chain.api(`/holders/${coin.mint}`).then(result => {
           if (!evidence.isConnected) return;
+          result.accounts = (result.accounts || []).slice(0, 5);
           evidence.querySelector('#largest-accounts').innerHTML = result.accounts.map(account => `<div class="health-check"><a href="https://solscan.io/account/${esc(account.address)}" target="_blank" rel="noopener noreferrer">${esc(short(account.address))}</a><small>${esc(fromUnits(account.amount, account.decimals))}</small></div>`).join('') || '<p class="muted">No token account data available.</p>';
         }).catch(() => { if (evidence.isConnected) evidence.querySelector('#largest-accounts').textContent = 'Token account data unavailable.'; });
       }
@@ -1273,6 +1278,14 @@ document.addEventListener(
       } catch { /* Continue with mint-based artwork discovery. */ }
     }
     if (img.dataset.coinMint && !img.dataset.recovered && !img.getAttribute('src')?.startsWith('/api/metadata/')) {
+      const alternatives = artworkGateways(img.dataset.gatewaySource || img.src);
+      const attempt = Number(img.dataset.gatewayAttempt || 0);
+      if (attempt < alternatives.length) {
+        img.dataset.gatewaySource ||= img.src;
+        img.dataset.gatewayAttempt = String(attempt + 1);
+        img.src = alternatives[attempt];
+        return;
+      }
       img.dataset.recovered = 'true';
       const failedUrl = img.src;
       img.src = `/api/metadata/${encodeURIComponent(img.dataset.coinMint)}/artwork?exclude=${encodeURIComponent(failedUrl)}`;
