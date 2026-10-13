@@ -20,7 +20,21 @@ export function walletMessageSummary(original, signed, addressLookupTableAccount
     const economic = instructions => instructions.filter(ix => !ix.programId.equals(ComputeBudgetProgram.programId));
     const first = economic(a), second = economic(b);
     const identical = first.length === second.length && first.every((ix, i) => ix.programId.equals(second[i].programId) && Buffer.from(ix.data).equals(Buffer.from(second[i].data)) && ix.keys.length === second[i].keys.length && ix.keys.every((key, j) => key.pubkey.equals(second[i].keys[j].pubkey) && key.isSigner === second[i].keys[j].isSigner && key.isWritable === second[i].keys[j].isWritable));
-    return `version ${reviewed.version}->${signed.version}; claim/trade instructions ${identical ? 'unchanged' : 'changed'}; budget [${budget(a)}]->[${budget(b)}]`;
+    const differences = [];
+    if (first.length !== second.length) differences.push(`instruction count ${first.length}->${second.length}`);
+    for (let i = 0; i < Math.max(first.length, second.length); i++) {
+      const x = first[i], y = second[i];
+      if (!x || !y) { differences.push(`instruction ${i + 1} ${x ? 'removed' : 'added'} program ${(x || y).programId.toBase58()}`); continue; }
+      if (!x.programId.equals(y.programId)) differences.push(`instruction ${i + 1} program ${x.programId.toBase58()}->${y.programId.toBase58()}`);
+      if (!Buffer.from(x.data).equals(Buffer.from(y.data))) differences.push(`instruction ${i + 1} data changed (${x.data.length}->${y.data.length} bytes)`);
+      if (x.keys.length !== y.keys.length) differences.push(`instruction ${i + 1} account count ${x.keys.length}->${y.keys.length}`);
+      for (let j = 0; j < Math.min(x.keys.length, y.keys.length); j++) {
+        const k = x.keys[j], l = y.keys[j];
+        if (!k.pubkey.equals(l.pubkey)) differences.push(`instruction ${i + 1} account ${j + 1} address changed`);
+        else if (k.isSigner !== l.isSigner || k.isWritable !== l.isWritable) differences.push(`instruction ${i + 1} account ${j + 1} permissions signer ${k.isSigner}->${l.isSigner}, writable ${k.isWritable}->${l.isWritable}`);
+      }
+    }
+    return `version ${reviewed.version}->${signed.version}; claim/trade instructions ${identical ? 'unchanged' : 'changed'}; ${differences.slice(0, 6).join('; ')}; budget [${budget(a)}]->[${budget(b)}]`;
   } catch { return 'message could not be safely decoded'; }
 }
 
