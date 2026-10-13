@@ -160,23 +160,37 @@ export function createApi({
   }));
   app.get('/api/metadata/:mint/artwork', route(async (req, res) => {
     const mint = address(req.params.mint);
+    const normalizeArtwork = value => {
+      try {
+        if (typeof value !== 'string' || value.length > 2048) return null;
+        if (value.startsWith('ipfs://')) value = `https://gateway.pinata.cloud/ipfs/${value.slice(7).replace(/^ipfs\//, '')}`;
+        const url = new URL(value);
+        return url.protocol === 'https:' && !url.username && !url.password && (!url.port || url.port === '443') ? url.href : null;
+      } catch { return null; }
+    };
+    const excluded = normalizeArtwork(req.query.exclude);
+    const dexOnly = req.query.provider === 'dex';
+    const usable = value => {
+      const normalized = normalizeArtwork(value);
+      return normalized && normalized !== excluded ? normalized : null;
+    };
     const cached = artworkReferences.get(mint);
-    let image = cached?.expires > Date.now() ? cached.image : null;
+    let image = !dexOnly && cached?.expires > Date.now() ? usable(cached.image) : null;
     if (!image) {
       const launch = await chainIndex?.getLaunch(mint);
-      if (launch?.uri) {
-        try { image = (await tokenMetadata(launch.uri)).image; } catch { /* Try independent token providers below. */ }
+      if (!dexOnly && launch?.uri) {
+        try { image = usable((await tokenMetadata(launch.uri)).image); } catch { /* Try independent token providers below. */ }
       }
-      if (!image) {
+      if (!image && !dexOnly) {
         try {
           const tokens = await jupiter(`/tokens/v2/search?query=${mint}`);
-          image = Array.isArray(tokens) ? tokens.find(token => token.id === mint)?.icon : null;
+          image = Array.isArray(tokens) ? usable(tokens.find(token => token.id === mint)?.icon) : null;
         } catch { /* Artwork discovery must not depend on one provider. */ }
       }
       if (!image) {
         try {
           const pairs = await upstream(`https://api.dexscreener.com/token-pairs/v1/solana/${mint}`);
-          image = Array.isArray(pairs) ? pairs.find(pair => pair.chainId === 'solana' && pair.baseToken?.address === mint && pair.info?.imageUrl)?.info.imageUrl : null;
+          image = Array.isArray(pairs) ? pairs.filter(pair => pair.chainId === 'solana' && pair.baseToken?.address === mint).map(pair => usable(pair.info?.imageUrl)).find(Boolean) : null;
         } catch { /* Report unavailable artwork rather than invent an image. */ }
       }
       let url;
@@ -186,7 +200,7 @@ export function createApi({
       if (artworkReferences.size >= 500) artworkReferences.delete(artworkReferences.keys().next().value);
       artworkReferences.set(mint, { image, expires: Date.now() + 900000 });
     }
-    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.setHeader('Cache-Control', excluded || dexOnly ? 'no-store' : 'public, max-age=300');
     res.setHeader('Referrer-Policy', 'no-referrer');
     // Unknown provider hosts are fetched by the browser, never by our server.
     res.redirect(302, imageHosts.has(new URL(image).hostname) ? `/api/artwork?uri=${encodeURIComponent(image)}` : image);

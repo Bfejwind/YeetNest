@@ -21,6 +21,23 @@ async function withApi(fetcher, callback, config = {}) {
 }
 const ok = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 
+test('artwork recovery skips a broken Jupiter URL and finds the matching token on DexScreener', async () => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  await withApi(async url => {
+    if (String(url).startsWith('https://api.jup.ag/')) return ok([{ id: mint, icon: 'https://static.jup.ag/broken.png' }]);
+    if (String(url).includes('api.dexscreener.com')) return ok([
+      { chainId: 'solana', baseToken: { address: 'wrong' }, info: { imageUrl: 'https://static.jup.ag/wrong.png' } },
+      { chainId: 'solana', baseToken: { address: mint }, info: { imageUrl: 'ipfs://real-artwork' } },
+    ]);
+    assert.equal(String(url), 'https://gateway.pinata.cloud/ipfs/real-artwork');
+    return new Response(Buffer.from([137, 80, 78, 71]), { headers: { 'content-type': 'image/png' } });
+  }, async request => {
+    const response = await request(`/metadata/${mint}/artwork?exclude=${encodeURIComponent('https://static.jup.ag/broken.png')}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('content-type'), 'image/png');
+  });
+});
+
 test('missing token artwork resolves an exact mint through Jupiter and caches discovery', async () => {
   const mint = Keypair.generate().publicKey.toBase58();
   let lookups = 0;

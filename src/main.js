@@ -1245,6 +1245,11 @@ document.addEventListener(
   (event) => {
     const img = event.target;
     if (!(img instanceof HTMLImageElement) || img.dataset.fallback) return;
+    if (img.dataset.coinMint && !img.dataset.dex && img.getAttribute('src')?.startsWith('/api/metadata/')) {
+      img.dataset.dex = 'true';
+      img.src = `/api/metadata/${encodeURIComponent(img.dataset.coinMint)}/artwork?provider=dex`;
+      return;
+    }
     if (img.dataset.coinMint && !img.dataset.direct && img.getAttribute('src')?.startsWith('/api/artwork?')) {
       try {
         const uri = new URL(new URL(img.src).searchParams.get('uri'));
@@ -1255,7 +1260,8 @@ document.addEventListener(
     }
     if (img.dataset.coinMint && !img.dataset.recovered && !img.getAttribute('src')?.startsWith('/api/metadata/')) {
       img.dataset.recovered = 'true';
-      img.src = `/api/metadata/${encodeURIComponent(img.dataset.coinMint)}/artwork`;
+      const failedUrl = img.src;
+      img.src = `/api/metadata/${encodeURIComponent(img.dataset.coinMint)}/artwork?exclude=${encodeURIComponent(failedUrl)}`;
       return;
     }
     img.dataset.fallback = "true";
