@@ -19,6 +19,7 @@ import { createMarketFeed } from './market-feed.js';
 import { createCatalogueStore } from './catalogue-store.js';
 import { decodeCursor, encodeCursor } from './discovery-cursor.js';
 import { createTokenMetadata } from './token-metadata.js';
+import { createPilotControl } from './pilot-control.js';
 import { verifyPumpLaunch, pumpListing, pumpGlobal as fetchPumpGlobal } from './pump-protocol.js';
 
 const address = (value) => {
@@ -69,6 +70,12 @@ export function createApi({
   app.set('trust proxy', proxyHops);
   const community = createCommunityStore({ databaseUrl: config.DATABASE_URL, directory: storageDir });
   const persisted = createAppStore({ databaseUrl: config.DATABASE_URL, directory: storageDir });
+  const pilot = config.DATABASE_URL ? createPilotControl(config.DATABASE_URL) : null;
+  const rawFetch = fetcher;
+  const sharedInterval = Number(config.RPC_SHARED_INTERVAL_MS || 500);
+  if (!Number.isInteger(sharedInterval) || sharedInterval < 100 || sharedInterval > 60000) throw new Error('Invalid RPC_SHARED_INTERVAL_MS.');
+  const sharedRpcFetch = pilot?.fetch(rawFetch, sharedInterval);
+  fetcher = (url, options) => sharedRpcFetch && String(url) === (config.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com') ? sharedRpcFetch(url, options) : rawFetch(url, options);
   const catalogue = createCatalogueStore({ databaseUrl: config.DATABASE_URL, fallback: persisted });
   const security = createSecurityStore(persisted, Date.now, config.DATABASE_URL);
   const chainIndex = createChainIndexStore(config.DATABASE_URL);
@@ -86,18 +93,19 @@ export function createApi({
   };
   let lastSecurityPrune = 0;
   app.locals.ready = async () => {
-    await Promise.all([community.ready(), persisted.ready(), catalogue.ready(), security.ready(), chainIndex?.ready(), indexQueue?.ready()]);
+    await Promise.all([community.ready(), persisted.ready(), catalogue.ready(), security.ready(), chainIndex?.ready(), indexQueue?.ready(), pilot?.ready()]);
     if (Date.now() - lastSecurityPrune > 60000) {
       await security.prune();
       lastSecurityPrune = Date.now();
     }
   };
-  app.locals.close = () => { marketFeed?.close(); return Promise.all([community.close(), persisted.close(), catalogue.close(), security.close(), chainIndex?.close(), indexQueue?.close()]); };
+  app.locals.close = () => { marketFeed?.close(); return Promise.all([community.close(), persisted.close(), catalogue.close(), security.close(), chainIndex?.close(), indexQueue?.close(), pilot?.close()]); };
   const limits = new Map();
   const marketCache = new Map();
   const artworkReferences = new Map();
   const candleCache = new Map();
   const localChart = async (mint, query = {}) => {
+    await pilot?.touch(mint);
     const interval = Number(query.interval || 60), days = Number(query.days || 1);
     const currency = query.currency || 'SOL', metric = query.metric || 'price';
     if (![60, 300, 900, 3600, 14400, 86400].includes(interval) || ![1, 7, 30, 90].includes(days) || !['SOL', 'USD'].includes(currency) || !['price', 'fdv'].includes(metric)) throw fail('Invalid chart interval, range, currency or metric.');
@@ -137,7 +145,7 @@ export function createApi({
     imageHosts.add(new URL(config.IPFS_GATEWAY).hostname);
   let connection = new Connection(
     config.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
-    "confirmed",
+    { commitment: 'confirmed', fetch: fetcher, disableRetryOnRateLimit: true },
   );
   const route = (handler) => (req, res, next) =>
     Promise.resolve(handler(req, res)).catch(next);
@@ -340,7 +348,7 @@ export function createApi({
     onSave: () => {
       connection = new Connection(
         config.SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com",
-        "confirmed",
+        { commitment: 'confirmed', fetch: fetcher, disableRetryOnRateLimit: true },
       );
       if (config.IPFS_GATEWAY)
         imageHosts.add(new URL(config.IPFS_GATEWAY).hostname);
@@ -663,6 +671,7 @@ export function createApi({
     route(async (req, res) => {
       const mint = address(req.params.mint);
       const embedded = req.query.chart === 'embed';
+      await pilot?.touch(mint);
       const cacheKey = `${mint}:${embedded ? 'embed' : 'candles'}`;
       const cached = marketCache.get(cacheKey);
       const indexedLaunch = await chainIndex?.getLaunch(mint);
@@ -749,9 +758,11 @@ export function createApi({
     await marketFeed.attach(req, res);
   }));
   app.get('/api/indexer/status', route(async (req, res) => {
-    const state = (await persisted.get(checkpoint))[0];
+    const targeted = indexProtocol === 'pump' && (config.INDEXER_SCOPE || 'targeted') === 'targeted';
+    const state = targeted && pilot ? await pilot.scanState() : (await persisted.get(checkpoint))[0];
     const swapState = indexProtocol === 'pump' ? (await persisted.get('pumpswap-indexer'))[0] : null;
     const jobs = await queueMetrics();
+    if (jobs) jobs.scope = targeted ? 'targeted' : 'global';
     res.json({ enabled: Boolean(indexQueue), historyScope: indexProtocol === 'pump' ? 'pump-and-pumpswap' : indexProtocol, scannedAt: state?.updatedAt || null, scanError: state?.error || null, scanBackfillComplete: Boolean(state?.backfillComplete), pumpSwap: swapState || null, jobs, historyComplete: Boolean(state?.backfillComplete && (indexProtocol !== 'pump' || swapState?.backfillComplete) && jobs && !jobs.pending && !jobs.processing && !jobs.failed) });
   }));
   app.get('/api/launches/indexed', route(async (req, res) => {
@@ -766,7 +777,7 @@ export function createApi({
     rows.splice(limit);
     const nextCursor = hasMore ? encodeCursor(rows.at(-1), query, status) : null;
     const registered = new Map((await catalogue.find(rows.map(row => row.mint))).map(coin => [coin.mint, coin]));
-    const state = (await persisted.get(checkpoint))[0];
+    const state = indexProtocol === 'pump' && (config.INDEXER_SCOPE || 'targeted') === 'targeted' && pilot ? await pilot.scanState() : (await persisted.get(checkpoint))[0];
     const swapState = indexProtocol === 'pump' ? (await persisted.get('pumpswap-indexer'))[0] : null;
     const jobs = await queueMetrics();
     res.json({ coins: rows.map(row => ({

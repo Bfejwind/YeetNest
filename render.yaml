@@ -34,6 +34,8 @@ services:
         sync: false
       - key: INDEXER_PROTOCOL
         value: pump
+      - key: RPC_SHARED_INTERVAL_MS
+        value: "500"
       - key: CLOUDFLARE_STREAM_CUSTOMER_CODE
         sync: false
   - type: worker
@@ -53,13 +55,21 @@ services:
         sync: false
       - key: INDEXER_ROLE
         value: all
+      - key: INDEXER_SCOPE
+        value: targeted
+      - key: INDEXER_BACKFILL
+        value: "false"
+      - key: RPC_SHARED_INTERVAL_MS
+        value: "500"
+      - key: INDEXER_RPC_INTERVAL_MS
+        value: "1000"
       - key: INDEXER_PROTOCOL
         value: pump
       - key: INDEXER_CONCURRENCY
-        value: "4"
+        value: "1"
       - key: INDEXER_PAGE_SIZE
-        value: "100"
+        value: "25"
       - key: INDEXER_SCAN_INTERVAL_MS
-        value: "2000"
+        value: "15000"
       - key: INDEXER_MAX_PENDING
         value: "10000"

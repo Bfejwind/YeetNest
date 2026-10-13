@@ -1,5 +1,7 @@
 # MemePop Small Launchpad Setup
 
+The new targeted indexing and shared RPC control require migration **014**. Follow [SMALL_LAUNCHPAD_CAPACITY.md](SMALL_LAUNCHPAD_CAPACITY.md) for deployment order and updated settings; it supersedes older global-indexing settings below.
+
 This is a single-instance pilot, not Pump.fun-scale certification. Do not open unrestricted trading until the funded acceptance tests and independent security review are complete. No hosting purchase, deployment or funded transaction was performed by this guide.
 
 ## 1. Keep The Existing Services

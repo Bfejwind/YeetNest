@@ -8,7 +8,7 @@ import { indexerSettings } from '../server/indexer-config.js';
 import { retryDelay } from '../server/indexer-queue.js';
 
 test('indexer concurrency and polling are bounded and retries back off', () => {
-  assert.equal(indexerSettings({}).concurrency, 4);
+  assert.equal(indexerSettings({}).concurrency, 1);
   assert.equal(indexerSettings({ INDEXER_ROLE: 'process' }).role, 'process');
   assert.throws(() => indexerSettings({ INDEXER_CONCURRENCY: '0' }));
   assert.throws(() => indexerSettings({ INDEXER_CONCURRENCY: '17' }));

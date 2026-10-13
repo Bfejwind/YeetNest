@@ -23,7 +23,7 @@ check('Pump protocol', !env.INDEXER_PROTOCOL || env.INDEXER_PROTOCOL === 'pump',
 check('Continuous worker configuration', env.INDEXER_ONCE !== 'true', 'Remove INDEXER_ONCE from Render.');
 if (env.NODE_ENV === 'production') check('Render proxy configuration', env.TRUST_PROXY_HOPS === '1', 'On Render set TRUST_PROXY_HOPS=1.');
 check('Production build exists', existsSync('dist/index.html'), 'Run npm run build first.');
-check('Migration 013 present', readdirSync('server/migrations').some(name => name.startsWith('013-')), 'Restore the chart migration before deployment.');
+check('Migration 014 present', readdirSync('server/migrations').some(name => name.startsWith('014-')), 'Restore the small-launchpad migration before deployment.');
 const git = spawnSync('git', ['ls-files', '--', '.env', '.env.local', '.env.production'], { encoding: 'utf8', windowsHide: true });
 if (git.status === 0) check('Local secret env files untracked', !git.stdout.trim(), 'Remove tracked secrets from Git and rotate exposed credentials.');
 else console.log('WARN Git tracking check unavailable in this environment.');

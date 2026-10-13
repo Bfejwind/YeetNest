@@ -1,5 +1,7 @@
 # MemePop Pump/PumpSwap Rollout
 
+Capacity rollout now requires migration **014** and the settings in [SMALL_LAUNCHPAD_CAPACITY.md](SMALL_LAUNCHPAD_CAPACITY.md). It supersedes older global-indexing setup below.
+
 For the single-instance pilot setup, start with [SMALL_LAUNCHPAD_SETUP.md](SMALL_LAUNCHPAD_SETUP.md). Run `npm run pilot:check` for secret-safe local configuration checks; it does not certify deployed trading.
 
 Chart update: see `CHART_SYSTEM.md`. The Pump worker now scans PumpSwap too, and local candle storage requires migration **013**. The historical checklist below predates this chart implementation; archive completeness, historical USD backfill and scale acceptance remain open.
