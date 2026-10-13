@@ -1,5 +1,5 @@
 import { Buffer } from "buffer";
-import { claimBlockhashOnlyChange } from './claim-message.js';
+import { claimWalletAdjustment } from './claim-message.js';
 import {
   Connection,
   PublicKey,
@@ -174,11 +174,13 @@ export async function submitAndConfirm(transaction, context = {}, onSubmitted = 
   const signed = await withTimeout(() => signer.signTransaction(transaction), 60000, 'Wallet transaction signing timed out. No transaction was broadcast by this request. Close the pending wallet prompt and recheck wallet activity before preparing again.');
   if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during signing.');
   if (!Buffer.from(signed.message.serialize()).equals(original)) {
-    if (context.operation !== 'creator-claim' || context.protocol !== 'pump' || !claimBlockhashOnlyChange(original, signed.message)) {
+    if (context.operation !== 'creator-claim' || context.protocol !== 'pump' || !claimWalletAdjustment(original, signed.message)) {
       throw new Error('Wallet changed the reviewed transaction instructions or account permissions. Nothing was broadcast. Disable wallet transaction modifications and prepare again.');
     }
     const valid = await connection.isBlockhashValid(signed.message.recentBlockhash, 'confirmed');
     if (!valid.value) throw new Error('Wallet returned an expired claim blockhash. Nothing was broadcast. Prepare again.');
+    const fee = (await connection.getFeeForMessage(signed.message, 'confirmed')).value;
+    if (fee === null || fee > 10000000) throw new Error('Wallet-adjusted claim fee exceeds the 0.01 SOL cap or is unavailable. Nothing was broadcast.');
     const check = await connection.simulateTransaction(signed, { sigVerify: true, commitment: 'confirmed' });
     if (check.value.err) throw new Error(`Signed creator claim failed simulation: ${JSON.stringify(check.value.err)}. Nothing was broadcast.`);
     if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during claim validation. Nothing was broadcast.');
