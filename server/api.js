@@ -95,6 +95,7 @@ export function createApi({
   app.locals.close = () => { marketFeed?.close(); return Promise.all([community.close(), persisted.close(), catalogue.close(), security.close(), chainIndex?.close(), indexQueue?.close()]); };
   const limits = new Map();
   const marketCache = new Map();
+  const artworkReferences = new Map();
   const candleCache = new Map();
   const localChart = async (mint, query = {}) => {
     const interval = Number(query.interval || 60), days = Number(query.days || 1);
@@ -158,11 +159,37 @@ export function createApi({
     indexed.expires = 0;
   }));
   app.get('/api/metadata/:mint/artwork', route(async (req, res) => {
-    const launch = await chainIndex?.getLaunch(address(req.params.mint));
-    if (!launch?.uri) throw fail('Indexed metadata not available.', 404);
-    const metadata = await tokenMetadata(launch.uri);
-    if (!metadata.image) throw fail('Supported artwork not available.', 404);
-    res.redirect(302, `/api/artwork?uri=${encodeURIComponent(metadata.image)}`);
+    const mint = address(req.params.mint);
+    const cached = artworkReferences.get(mint);
+    let image = cached?.expires > Date.now() ? cached.image : null;
+    if (!image) {
+      const launch = await chainIndex?.getLaunch(mint);
+      if (launch?.uri) {
+        try { image = (await tokenMetadata(launch.uri)).image; } catch { /* Try independent token providers below. */ }
+      }
+      if (!image) {
+        try {
+          const tokens = await jupiter(`/tokens/v2/search?query=${mint}`);
+          image = Array.isArray(tokens) ? tokens.find(token => token.id === mint)?.icon : null;
+        } catch { /* Artwork discovery must not depend on one provider. */ }
+      }
+      if (!image) {
+        try {
+          const pairs = await upstream(`https://api.dexscreener.com/token-pairs/v1/solana/${mint}`);
+          image = Array.isArray(pairs) ? pairs.find(pair => pair.chainId === 'solana' && pair.baseToken?.address === mint && pair.info?.imageUrl)?.info.imageUrl : null;
+        } catch { /* Report unavailable artwork rather than invent an image. */ }
+      }
+      let url;
+      try { url = new URL(image); } catch { throw fail('Token artwork is not available from metadata or providers.', 404); }
+      if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443')) throw fail('Unsupported token artwork URL.', 404);
+      image = url.href;
+      if (artworkReferences.size >= 500) artworkReferences.delete(artworkReferences.keys().next().value);
+      artworkReferences.set(mint, { image, expires: Date.now() + 900000 });
+    }
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    // Unknown provider hosts are fetched by the browser, never by our server.
+    res.redirect(302, imageHosts.has(new URL(image).hostname) ? `/api/artwork?uri=${encodeURIComponent(image)}` : image);
   }));
   app.get('/api/metadata/:mint', route(async (req, res) => {
     const launch = await chainIndex?.getLaunch(address(req.params.mint));

@@ -21,6 +21,26 @@ async function withApi(fetcher, callback, config = {}) {
 }
 const ok = value => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
 
+test('missing token artwork resolves an exact mint through Jupiter and caches discovery', async () => {
+  const mint = Keypair.generate().publicKey.toBase58();
+  let lookups = 0;
+  await withApi(async url => {
+    if (String(url).startsWith('https://api.jup.ag/')) {
+      lookups++;
+      return ok([{ id: 'wrong-mint', icon: 'https://static.jup.ag/wrong.png' }, { id: mint, icon: 'https://static.jup.ag/real.png' }]);
+    }
+    assert.equal(String(url), 'https://static.jup.ag/real.png');
+    return new Response(Buffer.from([137, 80, 78, 71]), { headers: { 'content-type': 'image/png' } });
+  }, async request => {
+    for (let i = 0; i < 2; i++) {
+      const response = await request(`/metadata/${mint}/artwork`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), 'image/png');
+    }
+    assert.equal(lookups, 1);
+  });
+});
+
 test('embedded chart remains available when discovery is rate limited or has no pool', async () => {
   for (const status of [429, 200]) {
     const mint = Keypair.generate().publicKey.toBase58();

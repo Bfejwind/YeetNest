@@ -64,7 +64,8 @@ const connected = () =>
   mode === "demo" ? demoWallet : Boolean(chain.publicKey);
 const short = (address) => `${address.slice(0, 4)}...${address.slice(-4)}`;
 function image(coin) {
-  if (!coin.image && coin.uri && coin.mint && mode === 'live') return `/api/metadata/${encodeURIComponent(coin.mint)}/artwork`;
+  if (!coin.image && coin.mint && mode === 'live') return `/api/metadata/${encodeURIComponent(coin.mint)}/artwork`;
+  if (coin.image?.startsWith('ipfs://')) return `/api/artwork?uri=${encodeURIComponent('https://gateway.pinata.cloud/ipfs/' + coin.image.slice(7).replace(/^ipfs\//, ''))}`;
   if (coin.image && /^data:image\/(png|jpeg|webp);base64,/.test(coin.image))
     return coin.image;
   if (coin.image && /^https:\/\//.test(coin.image))
@@ -72,7 +73,7 @@ function image(coin) {
   return '';
 }
 const art = (coin) =>
-  image(coin) ? `<img src="${esc(image(coin))}" alt="${esc(coin.name)}" loading="lazy"/>` : '<span class="missing-coin-art" title="Coin artwork unavailable" aria-label="Coin artwork unavailable">?</span>';
+  image(coin) ? `<img src="${esc(image(coin))}" data-coin-mint="${esc(coin.mint || '')}" alt="${esc(coin.name)}" loading="lazy" referrerpolicy="no-referrer"/>` : '<span class="missing-coin-art" title="Coin artwork unavailable" aria-label="Coin artwork unavailable">?</span>';
 function persist() {
   localStorage.setItem("yn-watchlist", JSON.stringify(watchlist));
 }
@@ -1244,6 +1245,19 @@ document.addEventListener(
   (event) => {
     const img = event.target;
     if (!(img instanceof HTMLImageElement) || img.dataset.fallback) return;
+    if (img.dataset.coinMint && !img.dataset.direct && img.getAttribute('src')?.startsWith('/api/artwork?')) {
+      try {
+        const uri = new URL(new URL(img.src).searchParams.get('uri'));
+        if (uri.protocol === 'https:' && !uri.username && !uri.password) {
+          img.dataset.direct = 'true'; img.src = uri.href; return;
+        }
+      } catch { /* Continue with mint-based artwork discovery. */ }
+    }
+    if (img.dataset.coinMint && !img.dataset.recovered && !img.getAttribute('src')?.startsWith('/api/metadata/')) {
+      img.dataset.recovered = 'true';
+      img.src = `/api/metadata/${encodeURIComponent(img.dataset.coinMint)}/artwork`;
+      return;
+    }
     img.dataset.fallback = "true";
     img.title = "Artwork unavailable from the provider";
     const placeholder = document.createElement('span');
