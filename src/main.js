@@ -619,8 +619,9 @@ async function refreshHoldings() {
   }
 }
 function modal(content, setup = () => {}) {
+  cleanupMarket();
   document.querySelector("#modal-root").innerHTML =
-    `<div class="overlay"><section class="modal" role="dialog" aria-modal="true"><button class="close" title="Close">${I("x")}</button>${content}</section></div>`;
+    `<div class="overlay"><section class="modal" role="dialog" aria-modal="true"><button type="button" class="close" title="Close" aria-label="Close">${I("x")}</button>${content}</section></div>`;
   document.querySelector(".close").onclick = closeModal;
   document.querySelector(".overlay").onclick = (e) => {
     if (e.target.classList.contains("overlay")) closeModal();
@@ -1179,12 +1180,21 @@ function editArtwork(coin) {
   modal(
     `<span class="eyebrow">CREATOR STUDIO</span><h2>Give your coin a new look.</h2><form id="image-form"><label class="upload-control"><span class="upload-preview" id="upload-preview">${art(coin)}</span><span>New coin artwork<small>PNG, JPEG, WebP, GIF · up to 5 MB</small></span><input type="file" id="coin-image" accept="image/png,image/jpeg,image/webp,image/gif" required/></label><p class="fine">${mode === "demo" ? "Updates this browser’s demo listing." : "Only your creator wallet can update this MemePop listing. Original on-chain metadata stays unchanged."}</p><p class="form-error" id="form-error" role="alert"></p><button class="primary full" type="submit">${I("image")} Save artwork</button></form>`,
     () => {
+      document.querySelector('.modal').classList.add('artwork-modal');
+      document.querySelector('.overlay').classList.add('artwork-overlay');
+      const form = document.querySelector('#image-form');
+      const preview = form.querySelector('#upload-preview');
+      const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'secondary full'; cancel.textContent = 'Cancel'; cancel.onclick = closeModal; form.append(cancel);
       document.querySelector("#coin-image").onchange = async (e) => {
         try {
-          uploaded = await normalizeImage(e.target.files[0]);
-          document.querySelector("#upload-preview").innerHTML =
+          if (!e.target.files?.length) return;
+          const next = await normalizeImage(e.target.files[0]);
+          if (!form.isConnected) return;
+          uploaded = next;
+          preview.innerHTML =
             `<img src="${uploaded}" alt="New artwork"/>`;
         } catch (err) {
+          if (!form.isConnected) return;
           inlineError(err);
           uploaded = "";
           e.target.value = "";
@@ -1192,7 +1202,7 @@ function editArtwork(coin) {
       };
       document.querySelector("#image-form").onsubmit = async (e) => {
         e.preventDefault();
-        const b = e.target.querySelector("button");
+        const b = e.target.querySelector('button[type="submit"]');
         b.disabled = true;
         try {
           if (!uploaded) throw new Error("Choose an image first.");

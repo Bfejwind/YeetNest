@@ -513,19 +513,23 @@ export async function mountMarket(coin, { esc }) {
       else delete root.dataset.viewport;
     };
     chart.timeScale().fitContent();
+    let chartRemoved = false;
+    const removeChart = () => {
+      if (chartRemoved) return;
+      chartRemoved = true;
+      observer.disconnect();
+      chart.remove();
+    };
     const observer = new ResizeObserver(() => {
+      if (chartRemoved) return;
       if (element.isConnected)
         chart.applyOptions({ width: element.clientWidth });
-      else {
-        observer.disconnect();
-        chart.remove();
-      }
+      else removeChart();
     });
     observer.observe(element);
     disposeChart = () => {
       cleanupUpdates();
-      observer.disconnect();
-      chart.remove();
+      removeChart();
       disposeChart = () => {};
     };
   } catch (error) {

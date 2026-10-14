@@ -158,11 +158,11 @@ footer { flex-wrap: wrap; font-size: 11px; }
 footer .powered-by { justify-content: flex-end; text-align: right; margin-left: auto; }
 .token-overlay { padding: 16px; }
 .token-modal { width: min(1040px, 100%); max-height: calc(100dvh - 32px); padding: 52px 32px 32px; }
-.token-overlay .close { position: fixed; top: 12px; right: 12px; z-index: 20; display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.overlay .modal > .close { position: sticky; top: 0; right: 0; float: right; z-index: 20; display: grid; place-items: center; width: 44px; height: 44px; margin-left: 12px; margin-bottom: 12px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.artwork-modal { padding-top: 56px; }
 @media (max-width: 600px) {
   .token-overlay { padding: 8px; }
   .token-modal { max-height: calc(100dvh - 16px); padding: 56px 16px 20px; }
-  .token-overlay .close { top: 8px; right: 8px; }
 }
 .missing-coin-art { display: inline-flex; width: 48px; height: 48px; flex-shrink: 0; align-items: center; justify-content: center; background: var(--surface); color: var(--muted); border: 1px solid var(--border); font-size: 20px; }
 .external-token-chart { display: block; width: 100%; height: 460px; min-width: 0; border: 0; background: var(--surface); }
