@@ -1,5 +1,6 @@
 import { Buffer } from "buffer";
 import { claimWalletAdjustment, walletMessageSummary, walletMessageReport } from './claim-message.js';
+import { simulateSignedFresh } from './signed-simulation.js';
 import {
   Connection,
   PublicKey,
@@ -185,9 +186,10 @@ async function validateWalletSignedMessage(original, signed, context) {
   }
   const valid = await connection.isBlockhashValid(signed.message.recentBlockhash, 'confirmed');
   if (!valid.value) throw new Error('Wallet returned an expired transaction blockhash. Nothing was broadcast. Prepare again.');
-  const fee = (await connection.getFeeForMessage(signed.message, 'confirmed')).value;
+  const feeResult = await connection.getFeeForMessage(signed.message, 'confirmed');
+  const fee = feeResult.value;
   if (fee === null || fee > 10000000) throw new Error('Wallet-adjusted transaction fee exceeds the 0.01 SOL cap or is unavailable. Nothing was broadcast.');
-  const check = await connection.simulateTransaction(signed, { sigVerify: true, commitment: 'confirmed' });
+  const check = await simulateSignedFresh(connection, signed, { minContextSlot: Math.max(valid.context?.slot || 0, feeResult.context?.slot || 0) });
   if (check.value.err) throw new Error(`Wallet-adjusted transaction failed simulation: ${JSON.stringify(check.value.err)}. Nothing was broadcast.`);
   return true;
 }
@@ -199,7 +201,7 @@ async function broadcastAndConfirm(signed, owner, context, onSubmitted = () => {
   onSubmitted(signature);
   recordTransaction({ ...context, signature, wallet: owner, state: 'submitted', network: 'mainnet-beta' });
   try {
-    const returned = await withTimeout(() => connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, maxRetries: 3 }), 30000, 'RPC broadcast timed out.');
+    const returned = await withTimeout(() => connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3 }), 30000, 'RPC broadcast timed out.');
     if (returned !== signature) throw new Error('RPC returned an unexpected signature.');
   } catch {
     recordTransaction({ signature, state: 'unknown' });
@@ -277,6 +279,12 @@ export async function prepareSwap(coin, side, amount, slippageBps = 100) {
       used = true;
       const signer = provider;
       if (signer.publicKey && signer.publicKey.toString() !== taker) throw new Error('The wallet extension active account differs from the connected account. Reconnect before selling. Nothing was broadcast.');
+      const durableNonce = tx.message.compiledInstructions.some(ix => tx.message.staticAccountKeys[ix.programIdIndex]?.toBase58() === '11111111111111111111111111111111' && ix.data.length >= 4 && Buffer.from(ix.data).readUInt32LE(0) === 4);
+      if (tx.message.header.numRequiredSignatures === 1 && !durableNonce) {
+        const fresh = await connection.getLatestBlockhash('confirmed');
+        if (publicKey?.toBase58() !== taker || provider !== signer || Date.now() > expires) throw new Error('Wallet or quote changed while refreshing. Request a new quote. Nothing was broadcast.');
+        tx.message.recentBlockhash = fresh.blockhash;
+      }
       const signed = await withTimeout(() => signer.signTransaction(tx), 60000, 'Wallet signing timed out. No swap was broadcast by this request.');
       if (publicKey?.toBase58() !== taker || provider !== signer) throw new Error('Wallet changed during signing.');
       const adjusted = await validateWalletSignedMessage(message, signed, { operation: 'swap', protocol: 'jupiter' });
