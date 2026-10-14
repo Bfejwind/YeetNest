@@ -73,12 +73,20 @@ export function claimWalletAdjustment(original, signedMessage, { addressLookupTa
   try {
     const reviewed = VersionedMessage.deserialize(original);
     if (reviewed.version !== signedMessage.version) return false;
-    const lookups = message => (message.addressTableLookups || []).map(table => ({ key: table.accountKey.toBase58(), writable: [...table.writableIndexes], readonly: [...table.readonlyIndexes] }));
-    if (JSON.stringify(lookups(reviewed)) !== JSON.stringify(lookups(signedMessage))) return false;
     const before = TransactionMessage.decompile(reviewed, { addressLookupTableAccounts }), after = TransactionMessage.decompile(signedMessage, { addressLookupTableAccounts });
     if (!before.payerKey.equals(after.payerKey) || reviewed.header.numRequiredSignatures !== signedMessage.header.numRequiredSignatures) return false;
-    const permissions = message => new Map(message.staticAccountKeys.map((key, i) => [key.toBase58(), `${message.isAccountSigner(i)}:${message.isAccountWritable(i)}`]));
+    const permissions = message => {
+      const keys = message.getAccountKeys({ addressLookupTableAccounts });
+      const result = new Map();
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys.get(i).toBase58(), flags = `${message.isAccountSigner(i)}:${message.isAccountWritable(i)}`;
+        if (result.has(key) && result.get(key) !== flags) return null;
+        result.set(key, flags);
+      }
+      return result;
+    };
     const a = permissions(reviewed), b = permissions(signedMessage);
+    if (!a || !b) return false;
     const budgetKey = ComputeBudgetProgram.programId.toBase58();
     if ([...a].some(([key, flags]) => b.get(key) !== flags)) return false;
     if ([...b].some(([key, flags]) => !a.has(key) && (![budgetKey, LIGHTHOUSE_PROGRAM].includes(key) || flags !== 'false:false'))) return false;

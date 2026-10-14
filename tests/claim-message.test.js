@@ -49,6 +49,27 @@ test('trade fee adjustment supports lookup tables but rejects changed lookup ref
   assert.equal(claimWalletAdjustment(original, modified, { addressLookupTableAccounts: [table], maxComputeUnits: 1400000 }), false);
 });
 
+test('sell permits SOL and token Lighthouse guards with safe lookup-to-static relocation', () => {
+  const owner = new PublicKey('BjE9givgn76we7v5tFAWe8km5wyP7cnaWDZqGm3ZGz5N');
+  const token = new PublicKey('5KNbxQXAeevX3M3XmUAtbwwwjz9zV2RVGqesVWx6JMWL');
+  const table = new AddressLookupTableAccount({ key: Keypair.generate().publicKey, state: { deactivationSlot: 18446744073709551615n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: owner, addresses: [token] } });
+  const hash = Keypair.generate().publicKey.toBase58();
+  const limit = ComputeBudgetProgram.setComputeUnitLimit({ units: 287842 });
+  const price = ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 9008 });
+  const trade = SystemProgram.transfer({ fromPubkey: owner, toPubkey: token, lamports: 1 });
+  const guard = (key, data) => new TransactionInstruction({ programId: new PublicKey(LIGHTHOUSE_PROGRAM), data: Buffer.from(data, 'hex'), keys: [{ pubkey: key, isSigner: key.equals(owner), isWritable: true }] });
+  const solGuard = guard(owner, '0604030040d5410b000000000403000001000000000000000000');
+  const tokenGuard = guard(token, '0a040402d237832300000000040300000600000000000000000508');
+  const compile = (instructions, tables) => new TransactionMessage({ payerKey: owner, recentBlockhash: hash, instructions }).compileToV0Message(tables);
+  const reviewed = compile([limit, price, trade], [table]).serialize();
+  const returned = compile([limit, price, trade, solGuard, tokenGuard], []);
+  assert.equal(claimWalletAdjustment(reviewed, returned, { addressLookupTableAccounts: [table], maxComputeUnits: 1400000 }), true);
+  const changed = SystemProgram.transfer({ fromPubkey: owner, toPubkey: token, lamports: 2 });
+  assert.equal(claimWalletAdjustment(reviewed, compile([limit, price, changed, solGuard, tokenGuard], []), { addressLookupTableAccounts: [table], maxComputeUnits: 1400000 }), false);
+  const wrongGuard = guard(Keypair.generate().publicKey, tokenGuard.data.toString('hex'));
+  assert.equal(claimWalletAdjustment(reviewed, compile([limit, price, trade, solGuard, wrongGuard], []), { addressLookupTableAccounts: [table], maxComputeUnits: 1400000 }), false);
+});
+
 test('claim wallet fee adjustment preserves instructions and permissions with bounded compute fees', () => {
   const owner = Keypair.generate().publicKey, recipient = Keypair.generate().publicKey;
   const hash = Keypair.generate().publicKey.toBase58();

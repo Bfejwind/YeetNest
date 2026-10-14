@@ -4,6 +4,7 @@ import {
   Connection,
   PublicKey,
   VersionedTransaction,
+  VersionedMessage,
   Keypair,
 } from "@solana/web3.js";
 import { fromUnits, toUnits, minimumOutput } from "./amounts.js";
@@ -170,7 +171,9 @@ async function validateWalletSignedMessage(original, signed, context) {
   if (Buffer.from(signed.message.serialize()).equals(original)) return false;
   if (!['creator-claim', 'trade', 'swap', 'buy', 'sell', 'initial-buy'].includes(context.operation) || signed.message.header.numRequiredSignatures !== 1) throw new Error('Wallet modified a transaction that cannot be safely adjusted. Nothing was broadcast. Prepare a fresh transaction.');
   const tables = [];
-  for (const lookup of signed.message.addressTableLookups || []) {
+  const reviewedMessage = VersionedMessage.deserialize(original);
+  const lookups = new Map([...(reviewedMessage.addressTableLookups || []), ...(signed.message.addressTableLookups || [])].map(lookup => [lookup.accountKey.toBase58(), lookup]));
+  for (const lookup of lookups.values()) {
     const { value } = await connection.getAddressLookupTable(lookup.accountKey);
     if (!value) throw new Error('Transaction lookup table is unavailable. Nothing was broadcast.');
     tables.push(value);
