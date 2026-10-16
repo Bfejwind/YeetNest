@@ -15,7 +15,7 @@ import bs58 from 'bs58';
 import { pollTransaction, recordTransaction, readTransactions, reconcileTransaction, TransactionOutcomeError } from './transaction-state.js';
 import { validateCurveInstruction } from './transaction-validation.js';
 import { validateLaunchTransaction } from './launch-validation.js';
-import { purchaseStore, reviewablePurchase } from './launch-purchases.js';
+import { purchaseStore, reviewablePurchase, purchaseWithRecovery } from './launch-purchases.js';
 import { validateCreatorClaim } from './claim-validation.js';
 import { withTimeout } from './async-timeout.js';
 
@@ -713,7 +713,7 @@ export async function cancelLaunchPurchase(intent) {
   const current = store.read().find(row => row.wallet === intent.wallet && row.mint === intent.mint);
   if (!current) throw new Error('Initial purchase is unavailable.');
   if (current.state === 'signing' && !current.signature) throw new Error('Wallet signing is still unresolved. Close the wallet approval prompt before skipping. No purchase record was removed.');
-  const checked = await withTimeout(() => reviewablePurchase(current, connection, { action: 'cancel' }), 15000, 'Purchase status check timed out. The purchase was not cancelled; its record has been kept.');
+  const checked = await withTimeout(() => reviewablePurchase(purchaseWithRecovery(current, readTransactions()), connection, { action: 'cancel' }), 15000, 'Purchase status check timed out. The purchase was not cancelled; its record has been kept.');
   if (checked.state === 'confirmed') { store.save(checked); throw new Error('Initial purchase was already confirmed.'); }
   store.save({ ...checked, state: 'cancelled' });
 }
@@ -725,7 +725,7 @@ export async function prepareLaunchPurchase(intent) {
   let current = store.read().find(row => row.wallet === intent.wallet && row.mint === intent.mint);
   if (!current || current.state === 'cancelled') throw new Error('Initial purchase was cancelled or is unavailable.');
   if (current.state === 'signing') throw new Error('Initial purchase signing is unresolved. Close the wallet prompt and check wallet activity before continuing.');
-  const checked = await reviewablePurchase(current, connection);
+  const checked = await reviewablePurchase(purchaseWithRecovery(current, readTransactions()), connection);
   current = store.save(checked);
   if (checked.state === 'confirmed') throw new Error('Initial purchase is already confirmed.');
   if (isPump(current)) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { purchaseStore, reviewablePurchase } from '../src/launch-purchases.js';
+import { purchaseStore, reviewablePurchase, purchaseWithRecovery } from '../src/launch-purchases.js';
 
 test('initial purchase intent persists separately from creation and never silently evicts unresolved work', () => {
   const data = new Map();
@@ -46,5 +46,15 @@ test('a purchase proven expired can be skipped or prepared again without clearin
   for (const action of ['cancel', 'prepare']) {
     const checked = await reviewablePurchase(intent, connection, { action });
     assert.equal(checked.state, 'expired'); assert.equal(checked.signature, 'old-signature');
+  }
+});
+
+
+test('purchase recovery fills missing expiry fields only from its matching transaction journal', () => {
+  const intent = { signature: 'sig', wallet: 'creator', mint: 'mint', state: 'unknown' };
+  const record = { ...intent, blockhash: 'hash', lastValidBlockHeight: 42, signedTransaction: 'payload' };
+  assert.equal(purchaseWithRecovery(intent, [record]).lastValidBlockHeight, 42);
+  for (const changed of [{ wallet: 'other' }, { mint: 'other' }, { signature: 'other' }]) {
+    assert.equal(purchaseWithRecovery(intent, [{ ...record, ...changed }]), intent);
   }
 });
