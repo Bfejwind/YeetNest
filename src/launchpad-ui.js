@@ -1,5 +1,6 @@
 import { createIcons, icons } from "./ui-icons.js";
 import * as chain from "./chain.js";
+import { withTimeout } from './async-timeout.js';
 import { createChart, CandlestickSeries, HistogramSeries } from "lightweight-charts";
 import { aggregateCandles } from './chart-candles.js';
 
@@ -122,7 +123,7 @@ export function installLaunchpadUI(context) {
 }
 
 export function reviewInitialPurchase(intent, { modal, esc, toast, transactionResult }) {
-  modal(`<span class="eyebrow">INITIAL PURCHASE / SEPARATE TRANSACTION</span><h2>Buy your new coin</h2><p class="address">${esc(intent.mint)}</p><div class="launch-terms"><span>Amount <b>${esc(intent.amount)} SOL</b></span><span>Slippage <b>${intent.slippageBps / 100}%</b></span></div><div id="initial-quote"></div><p class="form-error" role="alert"></p><button class="primary full" id="review-initial">${icon('refresh-cw')} Get initial buy quote</button><button class="secondary full" id="cancel-initial">Skip initial purchase</button>`, () => {
+  modal(`<span class="eyebrow">INITIAL PURCHASE / SEPARATE TRANSACTION</span><h2>Buy your new coin</h2><p class="address">${esc(intent.mint)}</p><div class="launch-terms"><span>Amount <b>${esc(intent.amount)} SOL</b></span><span>Slippage <b>${intent.slippageBps / 100}%</b></span></div><p class="fine">This saved request waits for your approval. Get a quote, then sign the separate purchase in your wallet.</p><div id="initial-quote"></div><p class="form-error" role="alert"></p><button class="primary full" id="review-initial">${icon('refresh-cw')} Get initial buy quote</button><button class="secondary full" id="cancel-initial">Skip initial purchase</button>`, () => {
     const button = document.querySelector('#review-initial');
     const root = button.closest('.modal');
     root.querySelector('#cancel-initial').onclick = async event => {
@@ -134,23 +135,27 @@ export function reviewInitialPurchase(intent, { modal, esc, toast, transactionRe
       button.disabled = true;
       root.querySelector('.form-error').textContent = '';
       try {
-        const quote = await chain.prepareLaunchPurchase(intent);
+        button.textContent = 'Checking purchase and preparing quote...';
+        const quote = await withTimeout(() => chain.prepareLaunchPurchase(intent), 45000, 'Initial buy quote timed out. No purchase was submitted by this quote request. Check the RPC connection and try again.');
         if (!root.isConnected) return;
         root.querySelector('#initial-quote').innerHTML = `<div class="launch-terms">${quote.inputIsMaximum ? `<span>Maximum SOL input <b>${esc(intent.amount)} SOL</b></span>` : ''}<span>${quote.inputIsMaximum ? 'Target tokens' : 'Estimated tokens'} <b>${esc(quote.output)}</b></span><span>Minimum tokens <b>${esc(quote.minimum)}</b></span>${quote.feeDetails.map(([name, amount]) => `<span>${esc(name)} <b>${esc(amount)} SOL</b></span>`).join('')}</div>`;
         button.disabled = false;
         button.textContent = 'Sign initial buy';
         button.onclick = async () => {
           button.disabled = true;
+          root.querySelector('#cancel-initial').disabled = true;
+          button.textContent = 'Approve in wallet / waiting for confirmation...';
           try {
             const signature = await quote.execute();
             transactionResult('Initial purchase confirmed.', signature, intent.mint);
           } catch (error) {
-            if (root.isConnected) { root.querySelector('.form-error').textContent = `${error.message} Your coin remains created. Recheck this purchase in Creator Studio.`; button.textContent = 'Recheck in Creator Studio'; }
+            if (root.isConnected) { root.querySelector('.form-error').textContent = `${error.message} Your coin remains created. Recheck this purchase in Creator Studio.`; button.textContent = 'Recheck purchase'; button.disabled = false; root.querySelector('#cancel-initial').disabled = false; button.onclick = () => reviewInitialPurchase(intent, { modal, esc, toast, transactionResult }); }
           }
         };
       } catch (error) {
         if (root.isConnected) root.querySelector('.form-error').textContent = error.message;
         button.disabled = false;
+        button.textContent = 'Get initial buy quote';
       }
     };
     createIcons({ icons });

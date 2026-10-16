@@ -8,7 +8,7 @@ export class TransactionOutcomeError extends Error {
   }
 }
 
-export async function pollTransaction(connection, signature, { attempts = 45, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), onState = () => {} } = {}) {
+export async function pollTransaction(connection, signature, { attempts = 45, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)), onState = () => {}, onMissing = async () => {} } = {}) {
   const deadline = Date.now() + 100000;
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (Date.now() >= deadline) break;
@@ -24,6 +24,11 @@ export async function pollTransaction(connection, signature, { attempts = 45, sl
       return signature;
     }
     onState('submitted');
+    // Resend only when the RPC successfully reports no status; outages cannot prove absence.
+    if (status === null && attempt % 5 === 0 && attempt < attempts - 1) {
+      try { await withTimeout(onMissing, 5000, 'Transaction resend timed out.'); }
+      catch { /* Keep reconciling the original signature when a resend fails. */ }
+    }
     if (attempt < attempts - 1) await sleep(2000);
   }
   onState('unknown');

@@ -207,7 +207,11 @@ async function broadcastAndConfirm(signed, owner, context, onSubmitted = () => {
     recordTransaction({ signature, state: 'unknown' });
     throw new TransactionOutcomeError(signature, 'unknown', 'Broadcast outcome is unknown.');
   }
-  return pollTransaction(connection, signature, { onState: state => recordTransaction({ signature, state }) });
+  const raw = signed.serialize();
+  return pollTransaction(connection, signature, {
+    onState: state => recordTransaction({ signature, state }),
+    onMissing: () => connection.sendRawTransaction(raw, { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 0 }),
+  });
 }
 
 export async function submitAndConfirm(transaction, context = {}, onSubmitted = () => {}) {
@@ -692,11 +696,11 @@ export async function prepareLaunchPurchase(intent) {
   await assertMainnet();
   if (intent.wallet !== publicKey.toBase58()) throw new Error('Connect the original creator wallet.');
   const store = purchaseStore();
-  const current = store.read().find(row => row.wallet === intent.wallet && row.mint === intent.mint);
+  let current = store.read().find(row => row.wallet === intent.wallet && row.mint === intent.mint);
   if (!current || current.state === 'cancelled') throw new Error('Initial purchase was cancelled or is unavailable.');
   if (current.state === 'signing') throw new Error('Initial purchase signing is unresolved. Close the wallet prompt and check wallet activity before continuing.');
   const checked = await reviewablePurchase(current, connection);
-  store.save(checked);
+  current = store.save(checked);
   if (checked.state === 'confirmed') throw new Error('Initial purchase is already confirmed.');
   if (isPump(current)) {
     const state = await launchState(current);

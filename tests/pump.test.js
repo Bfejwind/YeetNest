@@ -5,7 +5,7 @@ import { Keypair, PublicKey, TransactionMessage, VersionedTransaction, SystemPro
 import { validateLocalInstructions } from '../src/pump-validation.js';
 import { decodePumpEvents, PUMP_PROGRAM } from '../server/pump-events.js';
 import BN from 'bn.js';
-import { preparePumpLaunch, preparePumpTrade, preparePumpCreatorClaim } from '../src/pump-chain.js';
+import { preparePumpLaunch, preparePumpTrade, preparePumpCreatorClaim, pumpLaunchState } from '../src/pump-chain.js';
 const pump = createRequire(import.meta.url)('@pump-fun/pump-sdk');
 
 test('creator claim omits empty AMM accounts and resimulates before wallet signing', async () => {
@@ -97,4 +97,20 @@ test('Pump event decoder rejects failed transactions and spoofed nested program 
   const tx = { transaction: { message: { accountKeys: [] } }, meta: { err: null, logMessages: [`Program ${PUMP_PROGRAM} invoke [1]`, `Program data: ${encoded}`, 'Program 11111111111111111111111111111111 invoke [2]', `Program data: ${encoded}`, 'Program 11111111111111111111111111111111 success', `Program ${PUMP_PROGRAM} success`] } };
   assert.equal(decodePumpEvents(tx).length, 1);
   tx.meta.err = 'failed'; assert.deepEqual(decodePumpEvents(tx), []);
+});
+
+
+test('missing Pump creation distinguishes an uncreated mint, missing curve and wrong owner', async () => {
+  const mint = Keypair.generate().publicKey;
+  const coin = { mint: mint.toBase58(), poolId: pump.bondingCurvePda(mint).toBase58() };
+  let calls = [];
+  const connection = { getAccountInfo: async (key, commitment) => {
+    calls.push(key.toBase58()); assert.equal(commitment, 'confirmed'); return null;
+  } };
+  await assert.rejects(pumpLaunchState(connection, coin, pump), /neither the token mint nor its Pump bonding curve/);
+  assert.deepEqual(calls, [coin.poolId, coin.mint]);
+  connection.getAccountInfo = async key => key.equals(mint) ? { owner: PublicKey.default } : null;
+  await assert.rejects(pumpLaunchState(connection, coin, pump), /token mint exists/);
+  connection.getAccountInfo = async () => ({ owner: PublicKey.default });
+  await assert.rejects(pumpLaunchState(connection, coin, pump), /not owned by the Pump program/);
 });

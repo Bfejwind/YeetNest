@@ -32,11 +32,10 @@ async function openLiveLaunch(page, pendingSignIn = false) {
   await page.route('**/api/auth/challenge', r => r.fulfill({ json: { nonce: 'controlled', message: 'Controlled sign-in' } }));
   await page.route('**/api/auth/verify', r => r.fulfill({ json: { token: 'controlled-session' } }));
   await page.goto('/');
-  await page.locator('[data-mode="live"]').click();
   await page.locator('#wallet').click();
   await page.locator('[data-wallet="Phantom"]').click();
   await page.locator('header').getByRole('button', { name: /Connect wallet/ }).waitFor({ state: 'hidden' });
-  await page.locator('[data-launch]').first().click();
+  await page.locator('main [data-launch]').first().click();
   await page.getByLabel('Coin name').fill('Timeout Test');
   await page.getByLabel('Ticker', { exact: true }).fill('TIME');
   await page.locator('#coin-image').setInputFiles({ name: 'test.png', mimeType: 'image/png', buffer: PNG.sync.write({ width: 1, height: 1, data: Buffer.from([255, 0, 0, 255]) }) });
@@ -121,6 +120,10 @@ test('initial buy is separately reviewed and rejection preserves the created coi
   expect(await page.evaluate(() => window.__purchaseAmount)).toBe('0.05');
   await page.getByRole('button', { name: 'Sign initial buy', exact: true }).click();
   await expect(page.locator('.form-error')).toContainText('Your coin remains created');
+  await expect(page.getByRole('button', { name: 'Recheck purchase', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Recheck purchase', exact: true }).click();
+  await page.getByRole('button', { name: 'Get initial buy quote', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Sign initial buy', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('yn-launch-purchases'))[0].state)).toBe('ready');
   expect(await page.evaluate(() => window.__creations)).toBe(1);
 });

@@ -935,7 +935,7 @@ function reviewLaunch(prepared, metadata, d) {
           );
           const initialPurchase = d.initialBuy && d.initialBuy !== '0' ? chain.saveLaunchPurchase({ wallet: chain.publicKey.toBase58(), mint: prepared.mint, poolId: prepared.poolId, protocol: prepared.protocol || 'raydium', ticker: d.ticker.toUpperCase(), amount: d.initialBuy, slippageBps: d.initialSlippage, state: 'requested' }) : null;
             signatures = await prepared.execute();
-          if (initialPurchase) chain.saveLaunchPurchase({ ...initialPurchase, state: 'ready' });
+          if (initialPurchase) chain.saveLaunchPurchase({ ...initialPurchase, state: 'ready', creationSignature: signatures[0] });
           await chain.api("/coins", {
             method: "POST",
             body: JSON.stringify(record),

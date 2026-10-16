@@ -89,8 +89,13 @@ export async function preparePumpLaunch(context, { name, ticker, uri, onProgress
 export async function pumpLaunchState(connection, coin, moduleOverride) {
   const pump = await sdk(connection, moduleOverride), mint = new PublicKey(coin.mint), curveId = pump.bondingCurvePda(mint);
   if (!curveId.equals(new PublicKey(coin.poolId))) throw new Error('Noncanonical Pump bonding curve.');
-  const account = await connection.getAccountInfo(curveId);
-  if (!account?.owner.equals(pump.PUMP_PROGRAM_ID)) throw new Error('Pump bonding curve is not confirmed.');
+  const account = await connection.getAccountInfo(curveId, 'confirmed');
+  if (!account) {
+    const mintAccount = await connection.getAccountInfo(mint, 'confirmed');
+    if (!mintAccount) throw new Error('Token creation is not confirmed: neither the token mint nor its Pump bonding curve is visible on mainnet. The saved initial purchase request does not mean the coin was created. Check the launch transaction in wallet activity before launching again. No purchase was submitted.');
+    throw new Error('The token mint exists, but its Pump bonding curve is unavailable at confirmed commitment. Check the creation transaction and RPC connection before retrying. No purchase was submitted.');
+  }
+  if (!account.owner.equals(pump.PUMP_PROGRAM_ID)) throw new Error('The bonding curve account is not owned by the Pump program. No purchase was submitted.');
   const pool = pump.PUMP_SDK.decodeBondingCurve(account);
   if (![PublicKey.default.toBase58(), SOL].includes(pool.quoteMint.toBase58())) throw new Error('This integration supports SOL-quoted Pump coins only.');
   const graduated = pump.isBondingCurveMigrated(pool);

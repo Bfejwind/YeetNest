@@ -73,3 +73,17 @@ test('curve transaction validator rejects changed side, amounts and destinations
   const invalidAta = auxiliary([redirectedAta]);
   assert.throws(() => validateCurveInstruction(invalidAta, invalidAta.message.getAccountKeys(), expected), /associated token/);
 });
+
+
+test('confirmation resends only an absent signature and preserves unknown on resend errors', async () => {
+  let resends = 0;
+  const values = [null, { confirmationStatus: 'processed' }, { confirmationStatus: 'confirmed' }];
+  const connection = { getSignatureStatuses: async () => ({ value: [values.shift()] }) };
+  assert.equal(await pollTransaction(connection, 'same-signature', { attempts: 3, sleep: async () => {}, onMissing: async () => { resends++; throw new Error('RPC unavailable'); } }), 'same-signature');
+  assert.equal(resends, 1);
+  resends = 0;
+  await assert.rejects(pollTransaction({ getSignatureStatuses: async () => { throw new Error('Offline'); } }, 'same-signature', { attempts: 2, sleep: async () => {}, onMissing: async () => { resends++; } }), error => error.state === 'unknown');
+  assert.equal(resends, 0);
+  await assert.rejects(pollTransaction({ getSignatureStatuses: async () => ({ value: [null] }) }, 'same-signature', { attempts: 7, sleep: async () => {}, onMissing: async () => { resends++; } }), error => error.state === 'unknown');
+  assert.equal(resends, 2);
+});
