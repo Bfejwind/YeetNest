@@ -691,7 +691,8 @@ export async function cancelLaunchPurchase(intent) {
   const store = purchaseStore();
   const current = store.read().find(row => row.wallet === intent.wallet && row.mint === intent.mint);
   if (!current) throw new Error('Initial purchase is unavailable.');
-  const checked = await reviewablePurchase(current, connection);
+  if (current.state === 'signing' && !current.signature) throw new Error('Wallet signing is still unresolved. Close the wallet approval prompt before skipping. No purchase record was removed.');
+  const checked = await withTimeout(() => reviewablePurchase(current, connection, { action: 'cancel' }), 15000, 'Purchase status check timed out. The purchase was not cancelled; its record has been kept.');
   if (checked.state === 'confirmed') { store.save(checked); throw new Error('Initial purchase was already confirmed.'); }
   store.save({ ...checked, state: 'cancelled' });
 }

@@ -123,7 +123,7 @@ export function installLaunchpadUI(context) {
 }
 
 export function reviewInitialPurchase(intent, { modal, esc, toast, transactionResult }) {
-  modal(`<span class="eyebrow">INITIAL PURCHASE / SEPARATE TRANSACTION</span><h2>Buy your new coin</h2><p class="address">${esc(intent.mint)}</p><div class="launch-terms"><span>Amount <b>${esc(intent.amount)} SOL</b></span><span>Slippage <b>${intent.slippageBps / 100}%</b></span></div><p class="fine">This saved request waits for your approval. Get a quote, then sign the separate purchase in your wallet.</p><div id="initial-quote"></div><p class="form-error" role="alert"></p><button class="primary full" id="review-initial">${icon('refresh-cw')} Get initial buy quote</button><button class="secondary full" id="cancel-initial">Skip initial purchase</button>`, () => {
+  modal(`<span class="eyebrow">INITIAL PURCHASE / SEPARATE TRANSACTION</span><h2>Buy your new coin</h2><p class="address">${esc(intent.mint)}</p><div class="launch-terms"><span>Amount <b>${esc(intent.amount)} SOL</b></span><span>Slippage <b>${intent.slippageBps / 100}%</b></span></div><p class="fine">An unsigned purchase can be skipped. If a transaction was already submitted, check its outcome before buying again; Skip cannot cancel it on the network.</p><div id="initial-quote"></div><p class="form-error" role="alert"></p><button class="primary full" id="review-initial">${icon('refresh-cw')} Get initial buy quote</button><button class="secondary full" id="cancel-initial">Skip initial purchase</button>`, () => {
     const button = document.querySelector('#review-initial');
     const root = button.closest('.modal');
     root.querySelector('#cancel-initial').onclick = async event => {

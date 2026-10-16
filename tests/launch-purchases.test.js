@@ -24,3 +24,17 @@ test('unknown or processed initial buys cannot be quoted again; failures and con
   assert.equal((await reviewablePurchase(intent, connection({ err: 'rejected' }))).state, 'failed');
   assert.deepEqual(await reviewablePurchase({ ...intent, signature: undefined }, connection(null)), { ...intent, signature: undefined });
 });
+
+
+test('skip preserves unresolved signatures and explains that network submissions cannot be cancelled', async () => {
+  const intent = { signature: 'original-signature', state: 'unknown' };
+  for (const status of [null, { confirmationStatus: 'processed' }]) {
+    const connection = { getSignatureStatuses: async () => ({ value: [status] }) };
+    await assert.rejects(reviewablePurchase(intent, connection, { action: 'cancel' }), /Skip cannot cancel.*original-signature/);
+    assert.equal(intent.state, 'unknown');
+  }
+  const failed = await reviewablePurchase(intent, { getSignatureStatuses: async () => ({ value: [{ err: 'failed' }] }) }, { action: 'cancel' });
+  assert.equal(failed.state, 'failed');
+  const unsigned = { state: 'requested' };
+  assert.equal(await reviewablePurchase(unsigned, {}, { action: 'cancel' }), unsigned);
+});
