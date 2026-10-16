@@ -169,7 +169,11 @@ async function assertMainnet() {
 }
 
 async function validateWalletSignedMessage(original, signed, context) {
-  if (Buffer.from(signed.message.serialize()).equals(original)) return false;
+  if (Buffer.from(signed.message.serialize()).equals(original)) {
+    const check = await withTimeout(() => simulateSignedFresh(connection, signed), 30000, 'Signed transaction validation timed out. Nothing was broadcast.');
+    if (check.value.err) throw new Error(`Signed transaction failed simulation: ${JSON.stringify(check.value.err)}. Nothing was broadcast.`);
+    return false;
+  }
   if (!['creator-claim', 'trade', 'swap', 'buy', 'sell', 'initial-buy'].includes(context.operation) || signed.message.header.numRequiredSignatures !== 1) throw new Error('Wallet modified a transaction that cannot be safely adjusted. Nothing was broadcast. Prepare a fresh transaction.');
   const tables = [];
   const reviewedMessage = VersionedMessage.deserialize(original);

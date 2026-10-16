@@ -61,8 +61,8 @@ async function preparedTransaction(context, instructions, { signers = [], spend 
       transaction = new VersionedTransaction(new TransactionMessage({ payerKey: new PublicKey(owner), recentBlockhash: fresh.blockhash, instructions: reviewed }).compileToV0Message());
       transaction.sign(signers);
       const checked = await connection.simulateTransaction(transaction);
-      if (checked.value.err) throw new Error(`Pump claim simulation failed: ${JSON.stringify(checked.value.err)}. No transaction was submitted.`);
-      if (wallet()?.toBase58() !== owner || Date.now() > expires || used) throw new Error('Claim review changed or expired. Prepare again.');
+      if (checked.value.err) throw new Error(`Pump transaction simulation failed: ${JSON.stringify(checked.value.err)}. No transaction was submitted.`);
+      if (wallet()?.toBase58() !== owner || Date.now() > expires || used) throw new Error('Pump review changed or expired. Prepare again.');
     }
     validateLocalInstructions(transaction, reviewed, owner, signers.map(signer => signer.publicKey.toBase58()));
     used = true;
@@ -80,7 +80,7 @@ export async function preparePumpLaunch(context, { name, ticker, uri, onProgress
   const instruction = await pump.PUMP_SDK.createV2Instruction({ mint: mint.publicKey, name, symbol: ticker, uri, creator: owner, user: owner, mayhemMode: false, cashback: false, holderReward: false });
   const poolId = pump.bondingCurvePda(mint.publicKey).toBase58();
   onProgress('Simulating Pump creation...');
-  const built = await preparedTransaction(context, [instruction], { signers: [mint], record: { operation: 'launch', protocol: 'pump', mint: mint.publicKey.toBase58(), poolId } });
+  const built = await preparedTransaction(context, [instruction], { signers: [mint], refreshBeforeSigning: true, record: { operation: 'launch', protocol: 'pump', mint: mint.publicKey.toBase58(), poolId } });
   return { mint: mint.publicKey.toBase58(), poolId, protocol: 'pump', transactions: 1, supply: fromUnits(global.tokenTotalSupply.toString(), 6),
     economics: { curveSupply: fromUnits(global.initialRealTokenReserves.toString(), 6), fundraisingTarget: 'Determined by Pump curve reserves', migrationFee: fromUnits(global.poolMigrationFee.toString(), 9), protocolFeePercent: `${Number(global.feeBasisPoints.toString()) / 100} (dynamic trade tiers may apply)`, platformFeePercent: '0', creatorFeePercent: `${Number(global.creatorFeeBasisPoints.toString()) / 100} (dynamic trade tiers may apply)`, networkFees: built.networkFee },
     execute: async () => [await built.execute()] };

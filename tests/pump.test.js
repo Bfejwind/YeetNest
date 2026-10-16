@@ -114,3 +114,27 @@ test('missing Pump creation distinguishes an uncreated mint, missing curve and w
   connection.getAccountInfo = async () => ({ owner: PublicKey.default });
   await assert.rejects(pumpLaunchState(connection, coin, pump), /not owned by the Pump program/);
 });
+
+
+test('Pump launch refreshes the blockhash and retains the mint signature before wallet approval', async () => {
+  const owner = Keypair.generate().publicKey;
+  const hashes = [Keypair.generate().publicKey.toBase58(), Keypair.generate().publicKey.toBase58()];
+  let simulations = 0, submitted;
+  const context = { wallet: () => owner, pumpSdk: { ...pump, online: { fetchGlobal: async () => ({ createV2Enabled: true, tokenTotalSupply: new BN('1000000000000000'), initialRealTokenReserves: new BN('793100000000000'), poolMigrationFee: new BN('15000000'), feeBasisPoints: new BN(100), creatorFeeBasisPoints: new BN(50) }) } }, connection: {
+    getAccountInfo: async () => ({ owner: pump.PUMP_PROGRAM_ID }),
+    getLatestBlockhash: async () => ({ blockhash: hashes.shift() }),
+    getFeeForMessage: async () => ({ value: 5000 }), getMinimumBalanceForRentExemption: async () => 10000000,
+    getBalance: async () => 1000000000,
+    simulateTransaction: async () => { simulations++; return { value: { err: null } }; },
+  }, submit: async transaction => { submitted = transaction; return 'signature'; } };
+  const expectedHash = hashes[1];
+  const launch = await preparePumpLaunch(context, { name: 'Fresh', ticker: 'FRESH', uri: 'https://example.com/metadata' });
+  await launch.execute();
+  assert.equal(submitted.message.recentBlockhash, expectedHash);
+  assert.equal(simulations, 2);
+  const nacl = (await import('tweetnacl')).default;
+  const keys = submitted.message.staticAccountKeys;
+  const mintIndex = keys.findIndex(key => key.toBase58() === launch.mint);
+  assert.ok(mintIndex > 0 && mintIndex < submitted.message.header.numRequiredSignatures);
+  assert.equal(nacl.sign.detached.verify(submitted.message.serialize(), submitted.signatures[mintIndex], keys[mintIndex].toBytes()), true);
+});
