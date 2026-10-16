@@ -1,3 +1,5 @@
+import { reconcileTransaction } from './transaction-state.js';
+
 const key = 'yn-launch-purchases';
 
 export function purchaseStore(storage = localStorage, now = Date.now) {
@@ -23,10 +25,9 @@ export function purchaseStore(storage = localStorage, now = Date.now) {
 
 export async function reviewablePurchase(intent, connection, { action = 'prepare' } = {}) {
   if (!intent.signature) return intent;
-  const { value } = await connection.getSignatureStatuses([intent.signature], { searchTransactionHistory: true });
-  const status = value[0];
-  if (status?.err) return { ...intent, state: 'failed' };
-  if (['confirmed', 'finalized'].includes(status?.confirmationStatus)) return { ...intent, state: 'confirmed' };
+  const checked = await reconcileTransaction(connection, intent);
+  if (['failed', 'expired'].includes(checked.state)) return checked;
+  if (['confirmed', 'finalized'].includes(checked.state)) return { ...checked, state: 'confirmed' };
   if (action === 'cancel') throw new Error(`This initial buy already has a signed transaction whose outcome is pending or unknown. Skip cannot cancel a transaction that may already have reached the network. Signature: ${intent.signature}. Close this dialog and recheck the purchase later; its record has been kept.`);
   throw new Error('The previous initial buy is pending or unknown. Recheck it before preparing another purchase.');
 }

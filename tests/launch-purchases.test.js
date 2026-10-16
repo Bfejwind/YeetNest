@@ -38,3 +38,13 @@ test('skip preserves unresolved signatures and explains that network submissions
   const unsigned = { state: 'requested' };
   assert.equal(await reviewablePurchase(unsigned, {}, { action: 'cancel' }), unsigned);
 });
+
+
+test('a purchase proven expired can be skipped or prepared again without clearing its signature', async () => {
+  const intent = { signature: 'old-signature', blockhash: 'blockhash', lastValidBlockHeight: 100, state: 'unknown' };
+  const connection = { getSignatureStatuses: async () => ({ value: [null] }), getBlockHeight: async () => 101, getTransaction: async () => null };
+  for (const action of ['cancel', 'prepare']) {
+    const checked = await reviewablePurchase(intent, connection, { action });
+    assert.equal(checked.state, 'expired'); assert.equal(checked.signature, 'old-signature');
+  }
+});

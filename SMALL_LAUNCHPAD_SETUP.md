@@ -128,6 +128,16 @@ The preflight prints presence/configuration checks, never secret values. It does
 8. Test an already migrated supported PumpSwap coin separately; do not spend large amounts merely to force your test coin to graduate. Migration-state transitions still require independent acceptance testing.
 9. Record results and signatures (public information), but no private keys. Obtain independent security review before inviting users to risk funds. Restrict or disable unsupported/Jupiter routes until their security policy is validated.
 
+### Launch confirmation recovery
+
+Deploy the web service containing the latest launch fixes (both the frontend build and server RPC allowlist), then reload the site. No database migration is required for these transaction recovery changes.
+
+Pump launches and trades now include a priority fee selected from recent RPC samples, with a fallback and a maximum of 0.0001 SOL at the configured 400,000 compute-unit limit. The network fee estimate shown for review includes this fee. This improves transaction scheduling but does not guarantee inclusion.
+
+If confirmation times out, open Creator Studio -> Transaction recovery -> Recover transactions. Newly submitted transactions retain their signed payload, blockhash and expiry height in this browser. Recovery may resend exactly that transaction; it does not request another signature or build a replacement. A finalized height past expiry plus repeated historical status/transaction checks can mark an absent transaction expired. RPC failures and processed transactions remain unresolved. Older records without expiry metadata cannot be automatically declared expired.
+
+Use Check creation and recover listing only to register a coin that already exists on-chain. It verifies the curve and creator first. A rejected creation no longer leaves a purchase request behind; a submitted creation with unknown confirmation retains its launch signature and intended purchase for recovery. Never clear browser storage to bypass an unresolved signature.
+
 ## 8. Operate The Pilot
 
 ### RPC Rate-Limit Recovery

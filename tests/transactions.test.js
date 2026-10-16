@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pollTransaction, TransactionOutcomeError } from '../src/transaction-state.js';
+import { pollTransaction, reconcileTransaction, TransactionOutcomeError } from '../src/transaction-state.js';
 import { minimumOutput, toUnits } from '../src/amounts.js';
 import { validateCurveInstruction } from '../src/transaction-validation.js';
 import { withTimeout } from '../src/async-timeout.js';
@@ -86,4 +86,39 @@ test('confirmation resends only an absent signature and preserves unknown on res
   assert.equal(resends, 0);
   await assert.rejects(pollTransaction({ getSignatureStatuses: async () => ({ value: [null] }) }, 'same-signature', { attempts: 7, sleep: async () => {}, onMissing: async () => { resends++; } }), error => error.state === 'unknown');
   assert.equal(resends, 2);
+});
+
+
+test('recovery proves expiry using finalized height and checks for late confirmations', async () => {
+  const record = { signature: 'signature', blockhash: 'blockhash', lastValidBlockHeight: 100, state: 'unknown' };
+  let height = 100, status = null, transaction = null, reads = 0;
+  const connection = { getSignatureStatuses: async () => { reads++; return { value: [status] }; }, getBlockHeight: async commitment => { assert.equal(commitment, 'finalized'); return height; }, getTransaction: async () => transaction };
+  assert.equal((await reconcileTransaction(connection, record)).state, 'unknown');
+  height = 101;
+  assert.equal((await reconcileTransaction(connection, record)).state, 'expired');
+  transaction = { meta: { err: null } };
+  assert.equal((await reconcileTransaction(connection, record)).state, 'confirmed');
+  transaction = { meta: { err: 'failure' } };
+  assert.equal((await reconcileTransaction(connection, record)).state, 'failed');
+  transaction = null; status = { confirmationStatus: 'processed' };
+  assert.equal((await reconcileTransaction(connection, record)).state, 'submitted');
+  status = null;
+  assert.equal((await reconcileTransaction(connection, { ...record, lastValidBlockHeight: undefined })).state, 'unknown');
+  assert.equal((await reconcileTransaction(connection, { ...record, state: 'confirmed' })).state, 'confirmed');
+  connection.getBlockHeight = async () => { throw new Error('RPC offline'); };
+  await assert.rejects(reconcileTransaction(connection, record), /RPC offline/);
+});
+
+test('recovery rechecks history after proving expiry instead of missing a late status', async () => {
+  const statuses = [null, { confirmationStatus: 'confirmed' }];
+  const connection = { getSignatureStatuses: async () => ({ value: [statuses.shift()] }), getBlockHeight: async () => 101, getTransaction: async () => null };
+  assert.equal((await reconcileTransaction(connection, { signature: 'signature', blockhash: 'blockhash', lastValidBlockHeight: 100 })).state, 'confirmed');
+});
+
+
+test('confirmation reports proven expiry instead of leaving the attempt unknown', async () => {
+  const states = [];
+  const connection = { getSignatureStatuses: async () => ({ value: [null] }), getBlockHeight: async () => 101, getTransaction: async () => null };
+  await assert.rejects(pollTransaction(connection, 'signature', { attempts: 1, recovery: { blockhash: 'blockhash', lastValidBlockHeight: 100 }, onState: state => states.push(state) }), error => error.state === 'expired');
+  assert.deepEqual(states, ['submitted', 'expired']);
 });

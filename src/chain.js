@@ -12,7 +12,7 @@ import { fromUnits, toUnits, minimumOutput } from "./amounts.js";
 import BN from "bn.js";
 import { findWalletProvider, requestWalletConnection } from "./wallet-provider.js";
 import bs58 from 'bs58';
-import { pollTransaction, recordTransaction, readTransactions, TransactionOutcomeError } from './transaction-state.js';
+import { pollTransaction, recordTransaction, readTransactions, reconcileTransaction, TransactionOutcomeError } from './transaction-state.js';
 import { validateCurveInstruction } from './transaction-validation.js';
 import { validateLaunchTransaction } from './launch-validation.js';
 import { purchaseStore, reviewablePurchase } from './launch-purchases.js';
@@ -202,8 +202,10 @@ async function broadcastAndConfirm(signed, owner, context, onSubmitted = () => {
   const signature = bs58.encode(signed.signatures[0]);
   const existing = readTransactions().find(row => row.signature === signature);
   if (existing) throw new TransactionOutcomeError(signature, existing.state, 'This signed transaction was already attempted.');
-  onSubmitted(signature);
-  recordTransaction({ ...context, signature, wallet: owner, state: 'submitted', network: 'mainnet-beta' });
+  const raw = signed.serialize();
+  const recovery = { lastValidBlockHeight: context.blockhash === signed.message.recentBlockhash ? context.lastValidBlockHeight : undefined, blockhash: signed.message.recentBlockhash, signedTransaction: Buffer.from(raw).toString('base64') };
+  onSubmitted(signature, recovery);
+  recordTransaction({ ...context, ...recovery, signature, wallet: owner, state: 'submitted', network: 'mainnet-beta' });
   try {
     const returned = await withTimeout(() => connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3 }), 30000, 'RPC broadcast timed out.');
     if (returned !== signature) throw new Error('RPC returned an unexpected signature.');
@@ -211,8 +213,8 @@ async function broadcastAndConfirm(signed, owner, context, onSubmitted = () => {
     recordTransaction({ signature, state: 'unknown' });
     throw new TransactionOutcomeError(signature, 'unknown', 'Broadcast outcome is unknown.');
   }
-  const raw = signed.serialize();
   return pollTransaction(connection, signature, {
+    recovery,
     onState: state => recordTransaction({ signature, state }),
     onMissing: () => connection.sendRawTransaction(raw, { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 0 }),
   });
@@ -235,11 +237,17 @@ export async function recoverTransactions() {
   await assertMainnet();
   const records = readTransactions().filter(row => row.wallet === publicKey.toBase58()).slice(0, 20);
   if (!records.length) return [];
-  const { value } = await connection.getSignatureStatuses(records.map(row => row.signature), { searchTransactionHistory: true });
-  records.forEach((row, i) => {
-    const status = value[i];
-    recordTransaction({ signature: row.signature, state: status?.err ? 'failed' : status?.confirmationStatus || (row.state === 'confirmed' || row.state === 'finalized' ? row.state : 'unknown') });
-  });
+  for (const row of records) {
+    try {
+      const checked = await withTimeout(() => reconcileTransaction(connection, row), 20000, 'Transaction status check timed out.');
+      recordTransaction(checked);
+      if (checked.state === 'unknown' && checked.signedTransaction) {
+        const signed = VersionedTransaction.deserialize(Buffer.from(checked.signedTransaction, 'base64'));
+        if (bs58.encode(signed.signatures[0]) !== row.signature || signed.message.recentBlockhash !== checked.blockhash) throw new Error('Saved transaction does not match its recovery record.');
+        await withTimeout(() => connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3 }), 15000, 'Recovery broadcast timed out.');
+      }
+    } catch { /* Keep unresolved records; neither RPC outages nor resend errors prove failure. */ }
+  }
   return readTransactions().filter(row => row.wallet === publicKey.toBase58()).slice(0, 20);
 }
 
@@ -686,6 +694,19 @@ export function pendingLaunchPurchases() {
 
 export function saveLaunchPurchase(entry) { return purchaseStore().save(entry); }
 
+export async function recoverLaunchListing(pending) {
+  if (pending.wallet !== publicKey?.toBase58()) throw new Error('Connect the original creator wallet.');
+  await assertMainnet();
+  const state = await launchState(pending);
+  if (!state.pool.creator.equals(publicKey)) throw new Error('The connected wallet is not this coin creator.');
+  await authenticate();
+  await api('/coins', { method: 'POST', body: JSON.stringify(pending) });
+  const store = purchaseStore();
+  const intent = store.read().find(row => row.wallet === pending.wallet && row.mint === pending.mint);
+  if (intent && !intent.signature && !['cancelled', 'confirmed'].includes(intent.state)) store.save({ ...intent, state: 'ready' });
+  localStorage.removeItem('yn-pending-registration');
+}
+
 export async function cancelLaunchPurchase(intent) {
   if (intent.wallet !== publicKey?.toBase58()) throw new Error('Connect the original creator wallet.');
   const store = purchaseStore();
@@ -721,10 +742,10 @@ export async function prepareLaunchPurchase(intent) {
   let attempt;
   const quote = await prepareCurveTrade({ mint: current.mint, poolId: current.poolId, protocol: current.protocol, decimals: 6, ticker: current.ticker }, 'Buy', current.amount, current.slippageBps, {
     record: { operation: 'initial-buy', mint: current.mint, poolId: current.poolId },
-    onSubmitted: signature => {
+    onSubmitted: (signature, recovery) => {
       const latest = store.read().find(row => row.wallet === current.wallet && row.mint === current.mint);
       if (latest?.state !== 'signing' || latest.attempt !== attempt) throw new Error('Initial purchase was cancelled or changed before broadcast.');
-      store.save({ ...current, signature, state: 'submitted', attempt });
+      store.save({ ...current, ...recovery, signature, state: 'submitted', attempt });
     },
   });
   let used = false;
@@ -740,7 +761,7 @@ export async function prepareLaunchPurchase(intent) {
       store.save({ ...current, signature, state: 'confirmed' });
       return signature;
     } catch (error) {
-      if (error.signature) store.save({ ...current, signature: error.signature, state: error.state || 'unknown' });
+      if (error.signature) store.save({ wallet: current.wallet, mint: current.mint, signature: error.signature, state: error.state || 'unknown' });
       else {
         const latest = store.read().find(row => row.wallet === current.wallet && row.mint === current.mint);
         if (latest?.state === 'signing' && latest.attempt === attempt) store.save({ ...current, state: 'ready' });

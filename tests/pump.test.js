@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { Keypair, PublicKey, TransactionMessage, VersionedTransaction, SystemProgram } from '@solana/web3.js';
+import { ComputeBudgetInstruction, Keypair, PublicKey, TransactionMessage, VersionedTransaction, SystemProgram } from '@solana/web3.js';
 import { validateLocalInstructions } from '../src/pump-validation.js';
 import { decodePumpEvents, PUMP_PROGRAM } from '../server/pump-events.js';
 import BN from 'bn.js';
@@ -119,19 +119,24 @@ test('missing Pump creation distinguishes an uncreated mint, missing curve and w
 test('Pump launch refreshes the blockhash and retains the mint signature before wallet approval', async () => {
   const owner = Keypair.generate().publicKey;
   const hashes = [Keypair.generate().publicKey.toBase58(), Keypair.generate().publicKey.toBase58()];
-  let simulations = 0, submitted;
+  let simulations = 0, submitted, submissionRecord;
   const context = { wallet: () => owner, pumpSdk: { ...pump, online: { fetchGlobal: async () => ({ createV2Enabled: true, tokenTotalSupply: new BN('1000000000000000'), initialRealTokenReserves: new BN('793100000000000'), poolMigrationFee: new BN('15000000'), feeBasisPoints: new BN(100), creatorFeeBasisPoints: new BN(50) }) } }, connection: {
     getAccountInfo: async () => ({ owner: pump.PUMP_PROGRAM_ID }),
-    getLatestBlockhash: async () => ({ blockhash: hashes.shift() }),
+    getLatestBlockhash: async () => ({ blockhash: hashes.shift(), lastValidBlockHeight: 123 }),
+    getRecentPrioritizationFees: async () => [{ prioritizationFee: 999999999 }],
     getFeeForMessage: async () => ({ value: 5000 }), getMinimumBalanceForRentExemption: async () => 10000000,
     getBalance: async () => 1000000000,
     simulateTransaction: async () => { simulations++; return { value: { err: null } }; },
-  }, submit: async transaction => { submitted = transaction; return 'signature'; } };
+  }, submit: async (transaction, record) => { submitted = transaction; submissionRecord = record; return 'signature'; } };
   const expectedHash = hashes[1];
   const launch = await preparePumpLaunch(context, { name: 'Fresh', ticker: 'FRESH', uri: 'https://example.com/metadata' });
   await launch.execute();
   assert.equal(submitted.message.recentBlockhash, expectedHash);
   assert.equal(simulations, 2);
+  const budget = TransactionMessage.decompile(submitted.message).instructions;
+  assert.equal(ComputeBudgetInstruction.decodeSetComputeUnitPrice(budget[1]).microLamports, 250000n);
+  assert.equal(submissionRecord.lastValidBlockHeight, 123);
+  assert.equal(submissionRecord.blockhash, expectedHash);
   const nacl = (await import('tweetnacl')).default;
   const keys = submitted.message.staticAccountKeys;
   const mintIndex = keys.findIndex(key => key.toBase58() === launch.mint);

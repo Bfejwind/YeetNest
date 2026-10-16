@@ -41,6 +41,7 @@ const rpcMethods = new Set([
   "getAccountInfo",
   "getMultipleAccounts",
   "getLatestBlockhash",
+  "getRecentPrioritizationFees",
   "getBlockHeight",
   "getEpochInfo",
   "getSlot",

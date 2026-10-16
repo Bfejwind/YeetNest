@@ -1,6 +1,7 @@
 import { Keypair, PublicKey, TransactionMessage, VersionedTransaction, ComputeBudgetProgram } from '@solana/web3.js';
 import BN from 'bn.js';
 import { fromUnits, toUnits, minimumOutput } from './amounts.js';
+import { withTimeout } from './async-timeout.js';
 import { validateLocalInstructions } from './pump-validation.js';
 
 const SOL = 'So11111111111111111111111111111111111111112';
@@ -36,8 +37,18 @@ export async function preparePumpCreatorClaim(context) {
 
 async function preparedTransaction(context, instructions, { signers = [], spend = 0n, record = {}, onSubmitted, refreshBeforeSigning = false } = {}) {
   const { connection, wallet, submit } = context, owner = wallet().toBase58();
-  const blockhash = await connection.getLatestBlockhash('confirmed');
-  const reviewed = [ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }), ...instructions];
+  let blockhash = await connection.getLatestBlockhash('confirmed');
+  // Prices are micro-lamports per CU. At 400k CU this caps priority fees at 0.0001 SOL.
+  let priorityPrice = 50000;
+  if (record.operation !== 'creator-claim' && connection.getRecentPrioritizationFees) {
+    try {
+      const samples = await withTimeout(() => connection.getRecentPrioritizationFees(), 5000, 'Priority fee lookup timed out.');
+      const fees = samples.map(sample => sample.prioritizationFee).filter(value => Number.isSafeInteger(value) && value >= 0).sort((a, b) => a - b);
+      if (fees.length) priorityPrice = Math.max(50000, Math.min(250000, fees[Math.floor((fees.length - 1) * 0.75)]));
+    } catch { /* Use a bounded fallback when fee estimation is unavailable. */ }
+  }
+  const reviewed = [ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }),
+    ...(record.operation === 'creator-claim' ? [] : [ComputeBudgetProgram.setComputeUnitPrice({ microLamports: priorityPrice })]), ...instructions];
   let transaction = new VersionedTransaction(new TransactionMessage({ payerKey: new PublicKey(owner), recentBlockhash: blockhash.blockhash, instructions: reviewed }).compileToV0Message());
   transaction.sign(signers);
   validateLocalInstructions(transaction, reviewed, owner, signers.map(signer => signer.publicKey.toBase58()));
@@ -58,6 +69,7 @@ async function preparedTransaction(context, instructions, { signers = [], spend 
     if (wallet()?.toBase58() !== owner) throw new Error('Wallet changed. Prepare again.');
     if (refreshBeforeSigning) {
       const fresh = await connection.getLatestBlockhash('confirmed');
+      blockhash = fresh;
       transaction = new VersionedTransaction(new TransactionMessage({ payerKey: new PublicKey(owner), recentBlockhash: fresh.blockhash, instructions: reviewed }).compileToV0Message());
       transaction.sign(signers);
       const checked = await connection.simulateTransaction(transaction);
@@ -66,7 +78,7 @@ async function preparedTransaction(context, instructions, { signers = [], spend 
     }
     validateLocalInstructions(transaction, reviewed, owner, signers.map(signer => signer.publicKey.toBase58()));
     used = true;
-    return submit(transaction, record, onSubmitted);
+    return submit(transaction, { ...record, blockhash: transaction.message.recentBlockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight }, onSubmitted);
   } };
 }
 

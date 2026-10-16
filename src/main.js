@@ -922,6 +922,7 @@ function reviewLaunch(prepared, metadata, d) {
         b.disabled = true;
         b.textContent = "Awaiting wallet and confirmation...";
         let signatures;
+        let initialPurchase;
         try {
           const record = {
             mint: prepared.mint,
@@ -933,7 +934,7 @@ function reviewLaunch(prepared, metadata, d) {
             "yn-pending-registration",
               JSON.stringify({ ...record, wallet: chain.publicKey.toBase58() }),
           );
-          const initialPurchase = d.initialBuy && d.initialBuy !== '0' ? chain.saveLaunchPurchase({ wallet: chain.publicKey.toBase58(), mint: prepared.mint, poolId: prepared.poolId, protocol: prepared.protocol || 'raydium', ticker: d.ticker.toUpperCase(), amount: d.initialBuy, slippageBps: d.initialSlippage, state: 'requested' }) : null;
+          initialPurchase = d.initialBuy && d.initialBuy !== '0' ? ({ wallet: chain.publicKey.toBase58(), mint: prepared.mint, poolId: prepared.poolId, protocol: prepared.protocol || 'raydium', ticker: d.ticker.toUpperCase(), amount: d.initialBuy, slippageBps: d.initialSlippage, state: 'requested' }) : null;
             signatures = await prepared.execute();
           if (initialPurchase) chain.saveLaunchPurchase({ ...initialPurchase, state: 'ready', creationSignature: signatures[0] });
           await chain.api("/coins", {
@@ -949,6 +950,14 @@ function reviewLaunch(prepared, metadata, d) {
           refreshLive();
           if (initialPurchase) reviewInitialPurchase(initialPurchase, { modal, esc, toast, transactionResult });
         } catch (error) {
+          if (error.signature) {
+            const pending = JSON.parse(localStorage.getItem('yn-pending-registration') || 'null');
+            if (pending?.mint === prepared.mint) localStorage.setItem('yn-pending-registration', JSON.stringify({ ...pending, creationSignature: error.signature }));
+            if (initialPurchase) chain.saveLaunchPurchase({ ...initialPurchase, state: 'creation-unknown', creationSignature: error.signature });
+          } else if (!signatures) {
+            const pending = JSON.parse(localStorage.getItem('yn-pending-registration') || 'null');
+            if (pending?.mint === prepared.mint) localStorage.removeItem('yn-pending-registration');
+          }
           inlineError(
             new Error(
               signatures

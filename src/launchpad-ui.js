@@ -83,22 +83,20 @@ export function installLaunchpadUI(context) {
     let pending;
     try { pending = JSON.parse(localStorage.getItem('yn-pending-registration') || 'null'); } catch { pending = null; }
     if (mode === 'live' && pending?.wallet === chain.publicKey?.toBase58()) {
-      document.querySelector('.content').insertAdjacentHTML('beforeend', `<section class="setup-section"><div class="section-heading"><h2>Pending listing</h2><button class="secondary" id="recover-listing">${icon('refresh-cw')} Recover listing</button></div><a href="https://solscan.io/token/${esc(pending.mint)}" target="_blank" rel="noopener noreferrer">${esc(pending.mint)}</a></section>`);
+      document.querySelector('.content').insertAdjacentHTML('beforeend', `<section class="setup-section"><div class="section-heading"><h2>Launch recovery</h2><button class="secondary" id="recover-listing">${icon('refresh-cw')} Check creation and recover listing</button></div><a href="https://solscan.io/token/${esc(pending.mint)}" target="_blank" rel="noopener noreferrer">${esc(pending.mint)}</a></section>`);
       document.querySelector('#recover-listing').onclick = async event => {
         const button = event.currentTarget;
         button.disabled = true;
         try {
-          await chain.authenticate();
-          await chain.api('/coins', { method: 'POST', body: JSON.stringify(pending) });
-          localStorage.removeItem('yn-pending-registration');
+          await withTimeout(() => chain.recoverLaunchListing(pending), 45000, 'Launch recovery timed out. The saved launch has been kept.');
           context.toast('Confirmed on-chain ownership; listing recovered.');
           context.reload();
         } catch(error) { context.toast(error.message); button.disabled = false; }
       };
     }
   }
-  if (page === "Portfolio" && mode === "live" && chain.publicKey) {
-    document.querySelector('.content').insertAdjacentHTML('beforeend', `<section class="setup-section"><div class="section-heading"><h2>Transaction recovery</h2><button class="secondary" id="recover-transactions">${icon('refresh-cw')} Recheck</button></div><div id="transaction-recovery"></div></section>`);
+  if (["Portfolio", "Creator Studio"].includes(page) && mode === "live" && chain.publicKey) {
+    document.querySelector('.content').insertAdjacentHTML('beforeend', `<section class="setup-section"><div class="section-heading"><h2>Transaction recovery</h2><button class="secondary" id="recover-transactions">${icon('refresh-cw')} Recover transactions</button></div><p class="fine">Checks status and resends the original approved transaction when needed. Older attempts without saved expiry details may remain unknown.</p><div id="transaction-recovery"></div></section>`);
     document.querySelector('#recover-transactions').onclick = async event => {
       const button = event.currentTarget;
       const root = document.querySelector('#transaction-recovery');
@@ -109,15 +107,17 @@ export function installLaunchpadUI(context) {
       } catch(error) { if (root.isConnected) root.textContent = error.message; }
       finally { button.disabled = false; }
     };
-    document
-      .querySelector(".market")
-      .insertAdjacentHTML(
-        "afterend",
-        `<section class="wallet-history"><div class="section-heading"><h2>Recent transactions</h2><button class="icon-button" id="refresh-activity" title="Refresh transactions">${icon("refresh-cw")}</button></div><div id="wallet-activity">Loading on-chain activity...</div></section>`,
-      );
-    loadActivity(context);
-    document.querySelector("#refresh-activity").onclick = () =>
+    if (page === "Portfolio") {
+      document
+        .querySelector(".market")
+        .insertAdjacentHTML(
+          "afterend",
+          `<section class="wallet-history"><div class="section-heading"><h2>Recent transactions</h2><button class="icon-button" id="refresh-activity" title="Refresh transactions">${icon("refresh-cw")}</button></div><div id="wallet-activity">Loading on-chain activity...</div></section>`,
+        );
       loadActivity(context);
+      document.querySelector("#refresh-activity").onclick = () =>
+        loadActivity(context);
+    }
   }
   createIcons({ icons });
 }

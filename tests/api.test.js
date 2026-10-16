@@ -391,3 +391,18 @@ test('upstream failures are never reported as successful execution', async () =>
     assert.ok((await response.json()).error);
   });
 });
+
+
+test('RPC proxy forwards priority fee estimation without caching its response', async () => {
+  let calls = 0;
+  await withApi(async (url, options) => {
+    const body = JSON.parse(options.body); assert.equal(body.method, 'getRecentPrioritizationFees');
+    calls++; return ok({ jsonrpc: '2.0', id: body.id, result: [{ slot: calls, prioritizationFee: 50000 }] });
+  }, async request => {
+    for (let id = 1; id <= 2; id++) {
+      const response = await request('/rpc', { jsonrpc: '2.0', id, method: 'getRecentPrioritizationFees', params: [] });
+      assert.equal(response.status, 200); assert.equal((await response.json()).result[0].slot, id);
+    }
+  });
+  assert.equal(calls, 2);
+});

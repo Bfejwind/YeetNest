@@ -1,3 +1,5 @@
+import nacl from 'tweetnacl';
+import bs58 from 'bs58';
 import { test, expect } from '@playwright/test';
 import { Keypair, SystemProgram, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import { PNG } from 'pngjs';
@@ -308,4 +310,86 @@ test('live wallet review requires explicit signing and reports provider failure 
   expect(executions).toBe(1); expect(await page.evaluate(() => window.__signatures)).toBe(1);
   await expect(page.locator('#sign-trade')).toBeDisabled();
   await expect(page.locator('.success-mark')).toHaveCount(0);
+});
+
+
+test('signed launch broadcasts and resends identical bytes, retaining recovery metadata', async ({ page }) => {
+  const wallet = Keypair.generate(), mint = Keypair.generate();
+  const blockhash = Keypair.generate().publicKey.toBase58();
+  const transaction = new VersionedTransaction(new TransactionMessage({ payerKey: wallet.publicKey, recentBlockhash: blockhash, instructions: [SystemProgram.transfer({ fromPubkey: mint.publicKey, toPubkey: wallet.publicKey, lamports: 0 })] }).compileToV0Message());
+  transaction.sign([mint]);
+  await page.exposeFunction('__signReviewed', bytes => Array.from(nacl.sign.detached(Uint8Array.from(bytes), wallet.secretKey)));
+  await page.addInitScript(wallet => { window.phantom = { solana: {
+    connect: async () => ({ publicKey: { toString: () => wallet } }), on: () => {},
+    signTransaction: async transaction => {
+      transaction.addSignature(transaction.message.staticAccountKeys[0], Uint8Array.from(await window.__signReviewed(Array.from(transaction.message.serialize()))));
+      return transaction;
+    },
+  } }; }, wallet.publicKey.toBase58());
+  let broadcasts = [], statusChecks = 0, signedChecks = 0;
+  await page.route('**/api/rpc', async route => {
+    const { id, method, params } = route.request().postDataJSON();
+    let result;
+    if (method === 'getGenesisHash') result = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
+    else if (method === 'simulateTransaction') {
+      expect(params[1].sigVerify).toBe(true);
+      const signed = VersionedTransaction.deserialize(Buffer.from(params[0], 'base64'));
+      signed.signatures.forEach((signature, i) => expect(nacl.sign.detached.verify(signed.message.serialize(), signature, signed.message.staticAccountKeys[i].toBytes())).toBe(true));
+      signedChecks++; result = { context: { slot: 1 }, value: { err: null, logs: [] } };
+    } else if (method === 'sendTransaction') {
+      broadcasts.push(params[0]);
+      result = bs58.encode(VersionedTransaction.deserialize(Buffer.from(params[0], 'base64')).signatures[0]);
+    } else if (method === 'getSignatureStatuses') {
+      statusChecks++; result = { context: { slot: 1 }, value: [statusChecks === 1 ? null : { slot: 1, confirmations: 1, err: null, confirmationStatus: 'confirmed' }] };
+    } else if (method === 'getBalance') result = { context: { slot: 1 }, value: 1000000000 };
+    else if (method === 'getTokenAccountsByOwner') result = { context: { slot: 1 }, value: [] };
+    else result = [];
+    await route.fulfill({ json: { jsonrpc: '2.0', id, result } });
+  });
+  await page.route('**/api/status', r => r.fulfill({ json: { network: 'mainnet-beta', uploads: true } }));
+  await page.route('**/api/tokens*', r => r.fulfill({ json: [] }));
+  await page.route('**/api/launches*', r => r.fulfill({ json: [] }));
+  await page.goto('/');
+  const result = await page.evaluate(async ({ serialized, blockhash }) => {
+    const chain = await import('/src/chain.js');
+    await chain.connectWallet('Phantom');
+    // The transaction constructor is obtained from the same browser dependency as chain.js.
+    const source = await (await fetch('/src/chain.js')).text();
+    const path = source.match(/from\s+["']([^"']*solana_web3[^"']*)["']/)?.[1];
+    if (!path) throw new Error('Browser Solana dependency not found');
+    const { VersionedTransaction } = await import(path);
+    const signature = await chain.submitAndConfirm(VersionedTransaction.deserialize(Uint8Array.from(atob(serialized), c => c.charCodeAt(0))), { operation: 'launch', blockhash, lastValidBlockHeight: 123 });
+    return { signature, records: JSON.parse(localStorage.getItem('yn-transactions')) };
+  }, { serialized: Buffer.from(transaction.serialize()).toString('base64'), blockhash });
+  expect(signedChecks).toBe(1); expect(broadcasts.length).toBe(2);
+  expect(broadcasts[0]).toBe(broadcasts[1]);
+  const saved = result.records.find(row => row.signature === result.signature);
+  expect(saved.state).toBe('confirmed'); expect(saved.blockhash).toBe(blockhash);
+  expect(saved.lastValidBlockHeight).toBe(123); expect(saved.signedTransaction).toBe(broadcasts[0]);
+});
+
+test('rejected token creation leaves no initial purchase or pending listing', async ({ page }) => {
+  const mint = Keypair.generate().publicKey.toBase58(), poolId = Keypair.generate().publicKey.toBase58();
+  await page.route('**/src/chain.js*', async route => {
+    const response = await route.fetch(); let source = await response.text();
+    const begin = source.indexOf('export async function prepareLaunch('), end = source.indexOf('export async function creatorFeeBalance(', begin);
+    source = source.slice(0, begin) + `export async function prepareLaunch() { return { mint: '${mint}', poolId: '${poolId}', protocol: 'pump', supply: '1000000000', transactions: 1, execute: async () => { throw new Error('Wallet rejected creation'); } }; }\n` + source.slice(end);
+    await route.fulfill({ response, body: source });
+  });
+  await page.route('**/api/rpc', route => {
+    const { id, method } = route.request().postDataJSON();
+    return route.fulfill({ json: { jsonrpc: '2.0', id, result: method === 'getBalance' ? { context: { slot: 1 }, value: 1000000000 } : { context: { slot: 1 }, value: [] } } });
+  });
+  await page.route('**/api/metadata', route => route.fulfill({ json: { uri: 'https://gateway.pinata.cloud/ipfs/metadata', image: 'https://gateway.pinata.cloud/ipfs/image' } }));
+  await openLiveLaunch(page);
+  await page.getByLabel('Initial buy (SOL)', { exact: true }).fill('0.01');
+  await page.getByRole('button', { name: 'Prepare live launch', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign and launch', exact: true }).click();
+  await expect(page.locator('#form-error')).toContainText('Wallet rejected creation');
+  expect(await page.evaluate(() => localStorage.getItem('yn-pending-registration'))).toBeNull();
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('yn-launch-purchases') || '[]'))).toEqual([]);
+  await page.locator('.modal .close').click();
+  await page.getByRole('button', { name: 'Creator Studio', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Transaction recovery', exact: true })).toBeVisible();
+  await expect(page.locator('#recover-transactions')).toBeEnabled();
 });
