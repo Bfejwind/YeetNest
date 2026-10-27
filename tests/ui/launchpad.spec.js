@@ -130,6 +130,49 @@ test('initial buy is separately reviewed and rejection preserves the created coi
   expect(await page.evaluate(() => window.__creations)).toBe(1);
 });
 
+test('creation and a separately approved initial buy complete without a duplicate launch', async ({ page }) => {
+  const mint = Keypair.generate().publicKey.toBase58(), poolId = Keypair.generate().publicKey.toBase58();
+  await page.route('**/src/chain.js*', async route => {
+    const response = await route.fetch();
+    let source = await response.text();
+    const begin = source.indexOf('export async function prepareLaunch(');
+    const end = source.indexOf('export async function creatorFeeBalance(', begin);
+    expect(end).toBeGreaterThan(begin);
+    source = source.slice(0, begin) + `export async function prepareLaunch() { return { mint: '${mint}', poolId: '${poolId}', protocol: 'pump', supply: '1000000000', transactions: 1, execute: async () => { window.__creations = (window.__creations || 0) + 1; return ['controlled-creation']; } }; }\n` + source.slice(end);
+    const purchase = source.indexOf('export async function prepareLaunchPurchase(');
+    source = source.slice(0, purchase) + `export async function prepareLaunchPurchase(intent) { window.__purchaseAmount = intent.amount; return { output: '1234', minimum: '1200', feeDetails: [['Network fee', '0.000005']], execute: async () => { window.__purchases = (window.__purchases || 0) + 1; saveLaunchPurchase({ ...intent, signature: 'controlled-purchase', state: 'confirmed' }); return 'controlled-purchase'; } }; }`;
+    await route.fulfill({ response, body: source });
+  });
+  await page.route('**/api/rpc', route => {
+    const { id, method } = route.request().postDataJSON();
+    return route.fulfill({ json: { jsonrpc: '2.0', id, result: method === 'getBalance' ? { context: { slot: 1 }, value: 1000000000 } : { context: { slot: 1 }, value: [] } } });
+  });
+  await page.route('**/api/metadata', route => route.fulfill({ json: { uri: 'https://gateway.pinata.cloud/ipfs/metadata', image: 'https://gateway.pinata.cloud/ipfs/image' } }));
+  let registrations = 0;
+  await page.route('**/api/coins', route => { registrations++; expect(route.request().postDataJSON().protocol).toBe('pump'); return route.fulfill({ json: { mint, poolId } }); });
+  await openLiveLaunch(page);
+  await page.getByLabel('Initial buy (SOL)', { exact: true }).fill('0.05');
+  expect(await page.locator('#launch-form').evaluate(form => [...form.elements].filter(field => field.validity && !field.validity.valid).map(field => [field.name, field.validationMessage]))).toEqual([]);
+  await page.getByRole('button', { name: 'Prepare live launch', exact: true }).click();
+  await expect(page.locator('.launch-terms')).toContainText('0.05 SOL · separate approval');
+  await page.getByRole('button', { name: 'Sign and launch', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Get initial buy quote' })).toBeVisible();
+  expect(registrations).toBe(1);
+  expect(await page.evaluate(() => window.__creations)).toBe(1);
+  await page.getByRole('button', { name: 'Get initial buy quote' }).click();
+  await expect(page.locator('#initial-quote')).toContainText('1200');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(await page.evaluate(() => window.__purchaseAmount)).toBe('0.05');
+  await page.getByRole('button', { name: 'Sign initial buy', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Initial purchase confirmed.', exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.__purchases)).toBe(1);
+  expect(await page.evaluate(() => window.__creations)).toBe(1);
+  expect(registrations).toBe(1);
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('yn-launch-purchases'))[0].state)).toBe('confirmed');
+  expect(await page.evaluate(() => localStorage.getItem('yn-pending-registration'))).toBeNull();
+});
+
 test('indexed market refresh notifications debounce updates and stop in demo mode', async ({ page }) => {
   await page.addInitScript(() => {
     window.__marketCallbacks = {};

@@ -157,3 +157,11 @@ Test a controlled service/worker restart and a database restore. Set moderation,
 - Pre-deploy commands: https://render.com/docs/deploys
 - Health checks: https://render.com/docs/health-checks
 - Compute plans: https://render.com/docs/compute-plans
+
+## Weekday launches with Phantom approvals
+
+In Creator Studio, open Weekday launches and save both templates, including artwork. Connect the intended Phantom wallet and select **Connect Phantom and enable**; approve login if prompted. The templates reuse their name, ticker, description, social links and artwork each weekday. Scheduled launches have no initial purchase.
+
+Keep this site open. From 9:00 a.m. Asia/Singapore on Monday–Friday, it prepares the next slot and shows the existing simulation/review screen. Select **Sign and launch** and approve Phantom. The second slot is offered after the first completes. Reconnection uses the existing trusted-wallet restore flow; a locked/disconnected wallet requires interaction. Nothing signs while the browser is closed. Missed days are skipped; closing a review can be resumed using **Review next due launch** in Creator Studio. Pause stops future scheduled submissions.
+
+Templates, schedule and attempt history are local to this browser, bound to the chosen wallet. Do not enable the same schedule on multiple browsers/devices: this is not a server-wide launch limit. Each slot is recorded before signing. Rejected or unresolved attempts are held for recovery rather than automatically replaced; a rejected attempt consumes that day's slot. Use the existing Transaction recovery and Launch recovery flows. Do not clear browser storage to retry. Browser storage must be available and Web Locks must be supported. No new server credentials, worker configuration or migration is required.

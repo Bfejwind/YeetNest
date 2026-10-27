@@ -1,3 +1,4 @@
+import { configureScheduleWallet, loadSchedule, saveSchedule, mountSchedule, nextScheduled, executeScheduled } from './weekday-launches.js';
 import { createIcons, icons } from "./ui-icons.js";
 import brandLogo from '../logo.png';
 import { isRealCoin, mergeCoin } from './coin-catalogue.js';
@@ -12,6 +13,8 @@ import { installMarketUI, mountDiscussion } from "./market-ui.js";
 import { walletBrowseLink } from './wallet-links.js';
 import { withTimeout } from './async-timeout.js';
 import { configureMarketEvents } from './market-events.js';
+
+configureScheduleWallet(() => chain.publicKey?.toBase58());
 
 const I = (name) => `<i data-lucide="${name}"></i>`;
 const esc = (value) =>
@@ -238,6 +241,12 @@ function render() {
   });
   installMarketUI({ page, mode, moderation: config?.moderationService, coins: allCoins(), esc, money, image, openCoin: detail, toast, setWatchlist: values => { watchlist = values; render(); }, navigate: next => { page = next; render(); } });
   if (chain.hostedDemo) document.querySelector(".content").insertAdjacentHTML("afterbegin", '<div class="notice">Online demo. Launches, artwork and simulated trades stay in this browser. Mainnet trading is not enabled.</div>');
+  if (page === 'Creator Studio') mountSchedule({ launch, esc, toast, render, connect: async () => {
+    if (localStorage.getItem('memepop-wallet') !== 'Phantom' || !chain.publicKey) {
+      await chain.connectWallet('Phantom'); walletEpoch++; bindWalletEvents();
+    }
+    await chain.authenticate();
+  } });
   createIcons({ icons });
 }
 
@@ -779,8 +788,10 @@ async function normalizeImage(file) {
     throw new Error("Image is too large after conversion.");
   return result;
 }
-function launch() {
-  let uploaded = "";
+function launch(options = {}) {
+  const { editSlot, job } = options;
+  const template = job?.template || (Number.isInteger(editSlot) ? loadSchedule().templates[editSlot] : null);
+  let uploaded = template?.image || "";
   let uploadedMetadata = null, uploadedMetadataKey = '';
   modal(
     `<span class="eyebrow">${mode === "demo" ? "DEMO LAUNCH" : "RAYDIUM / MAINNET"}</span><h2>Hatch your coin.</h2><form id="launch-form"><label class="upload-control"><span class="upload-preview" id="upload-preview">${I("image-plus")}</span><span>Coin artwork<small>PNG, JPEG, WebP, GIF · up to 5 MB</small></span><input id="coin-image" name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" ${mode === "live" ? "required" : ""}/></label><div class="form-row"><label>Coin name<input name="name" required maxlength="32" placeholder="Your next big idea"/></label><label>Ticker<input name="ticker" required maxlength="10" pattern="[A-Za-z0-9]+" placeholder="YEET"/></label></div><label>Description<textarea name="description" maxlength="500" placeholder="Give your flock a story."></textarea></label>${mode === "demo" ? `<div class="form-row"><label>Quote asset<select name="pair"><option>SOL</option><option>USDC</option><option>NVDAx</option><option>SPYx</option><option>TSLAx</option><option>QQQx</option><option>OPENAI</option><option>ANTHROPIC</option></select></label><label>Launch type<select name="launchMode"><option>Standard</option></select></label></div><p class="fine">Local demo launch. No on-chain token is created.</p>` : `<div class="launch-terms"><span>Quote asset <b>SOL</b></span><span>Launch mode <b>Standard</b></span><span>Migration <b>Raydium CPMM</b></span></div><div class="form-row"><label>Initial buy (SOL)<input name="initialBuy" inputmode="decimal" value="0" pattern="[0-9]+([.][0-9]+)?" required/></label><label>Initial buy slippage<select name="initialSlippage"><option value="50">0.5%</option><option value="100" selected>1%</option><option value="200">2%</option><option value="500">5%</option></select></label></div><p class="fine">Public IPFS artwork and metadata. Raydium default economics apply. Network fees are paid by your wallet.</p>${!config?.uploads ? `<div class="notice">${I("key-round")} Configure server PINATA_JWT to enable public uploads.</div>` : ""}`}<p class="form-error" id="form-error" role="alert"></p><button class="primary full" type="submit">${I("egg")} ${mode === "demo" ? "Hatch demo coin" : "Prepare live launch"}</button></form>`,
@@ -808,6 +819,15 @@ function launch() {
           "afterend",
           `<details class="social-fields"><summary>Social links</summary><label>Website<input name="website" type="url" placeholder="https://your-project.com" pattern="https://.*"/></label><label>X profile<input name="twitter" type="url" placeholder="https://x.com/your-project" pattern="https://(x[.]com|twitter[.]com)/.*"/></label><label>Telegram<input name="telegram" type="url" placeholder="https://t.me/your-project" pattern="https://t[.]me/.*"/></label></details>`,
         );
+      const scheduleForm = document.querySelector('#launch-form');
+      if (template) {
+        for (const [key, value] of Object.entries(template.fields)) if (scheduleForm.elements[key]) scheduleForm.elements[key].value = value;
+        scheduleForm.elements.image.required = false;
+        document.querySelector('#upload-preview').innerHTML = `<img src="${esc(uploaded)}" alt="Saved artwork"/>`;
+      }
+      if (Number.isInteger(editSlot)) {
+        scheduleForm.querySelector('[type=submit]').textContent = 'Save weekday template';
+      }
       const uploadNotice = document.querySelector("#launch-form .notice");
       if (uploadNotice) uploadNotice.textContent = "Configure Pinata or a public upload domain in Integrations.";
       const termsNote = document.querySelector("#launch-form .launch-terms + .fine");
@@ -820,6 +840,17 @@ function launch() {
         if (button.disabled) return;
         button.disabled = true;
         try {
+          if (Number.isInteger(editSlot)) {
+            if (!uploaded) throw new Error('Choose artwork for this template.');
+            const state = loadSchedule();
+            if (state.wallet && state.wallet !== chain.publicKey?.toBase58()) throw new Error('Connect the scheduled wallet before editing templates.');
+            const { image, ...fields } = d;
+            fields.initialBuy = '0';
+            state.templates[editSlot] = { fields, image: uploaded };
+            saveSchedule(state);
+            closeModal(); render(); toast('Weekday template saved. Scheduled launches have no initial buy.');
+            return;
+          }
           if (mode === "demo") {
             const coin = {
               id: Date.now(),
@@ -896,7 +927,7 @@ function launch() {
             finally { activePreparation = false; }
             if (!form.isConnected) return;
             if (chain.publicKey?.toBase58() !== owner) throw new Error('Wallet changed. Prepare the launch again.');
-            reviewLaunch(prepared, metadata, d);
+            reviewLaunch(prepared, metadata, d, job);
           }
         } catch (error) {
           if (!form.isConnected) return;
@@ -906,10 +937,11 @@ function launch() {
             mode === "demo" ? "Hatch demo coin" : "Prepare live launch";
         }
       };
+      if (job) scheduleForm.requestSubmit();
     },
   );
 }
-function reviewLaunch(prepared, metadata, d) {
+function reviewLaunch(prepared, metadata, d, job) {
   modal(
     `<span class="eyebrow">LIVE LAUNCH / REVIEW</span><h2>Ready to make it pop?</h2><div class="detail-heading"><img src="${esc(metadata.image)}" alt="${esc(d.name)}"/><div><h3>${esc(d.name)}</h3><span>$${esc(d.ticker.toUpperCase())}</span></div></div><div class="launch-terms"><span>Network <b>Solana mainnet</b></span><span>Supply <b>${prepared.supply}</b></span><span>Transactions <b>${prepared.transactions}</b></span><span>Initial buy <b>${d.initialBuy && d.initialBuy !== "0" ? `${esc(d.initialBuy)} SOL · separate approval` : "None"}</b></span>${prepared.economics ? `<span>Curve allocation <b>${esc(prepared.economics.curveSupply)} tokens</b></span><span>Fundraising target <b>${esc(prepared.economics.fundraisingTarget)} SOL</b></span><span>Migration fee <b>${esc(prepared.economics.migrationFee)} SOL</b></span><span>Protocol / platform / creator trading fees <b>${esc(prepared.economics.protocolFeePercent)}% / ${esc(prepared.economics.platformFeePercent)}% / ${esc(prepared.economics.creatorFeePercent)}%</b></span><span>Estimated network fees <b>${esc(prepared.economics.networkFees)} SOL</b></span>` : ""}</div><p class="address">Mint: ${esc(prepared.mint)}</p><p class="fine">Review transactions and network fees in your wallet. Raydium's default platform economics apply. Wallet confirmation submits a real token launch.</p><p class="form-error" id="form-error"></p><button class="primary full" id="sign-launch">${I("pen-line")} Sign and launch</button>`,
     () => {
@@ -935,7 +967,7 @@ function reviewLaunch(prepared, metadata, d) {
               JSON.stringify({ ...record, wallet: chain.publicKey.toBase58() }),
           );
           initialPurchase = d.initialBuy && d.initialBuy !== '0' ? ({ wallet: chain.publicKey.toBase58(), mint: prepared.mint, poolId: prepared.poolId, protocol: prepared.protocol || 'raydium', ticker: d.ticker.toUpperCase(), amount: d.initialBuy, slippageBps: d.initialSlippage, state: 'requested' }) : null;
-            signatures = await prepared.execute();
+            signatures = await executeScheduled(job, prepared);
           if (initialPurchase) chain.saveLaunchPurchase({ ...initialPurchase, state: 'ready', creationSignature: signatures[0] });
           await chain.api("/coins", {
             method: "POST",
@@ -1340,3 +1372,15 @@ setInterval(() => {
   )
     refreshLive(true);
 }, 60000);
+
+// One prompt at a time. No background signing, catch-up launches, or unattended spending.
+let weekdayPrompt = '';
+setInterval(() => {
+  if (document.hidden || document.querySelector('.overlay')) return;
+  try {
+    const job = nextScheduled();
+    if (!job || weekdayPrompt === job.key) return;
+    weekdayPrompt = job.key;
+    launch({ job });
+  } catch (error) { console.warn('Weekday schedule unavailable:', error.message); }
+}, 15000);

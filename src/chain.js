@@ -758,7 +758,7 @@ export async function prepareLaunchPurchase(intent) {
     store.save({ ...current, state: 'signing', attempt });
     try {
       const signature = await quote.execute();
-      store.save({ ...current, signature, state: 'confirmed' });
+      store.save({ wallet: current.wallet, mint: current.mint, signature, state: 'confirmed' });
       return signature;
     } catch (error) {
       if (error.signature) store.save({ wallet: current.wallet, mint: current.mint, signature: error.signature, state: error.state || 'unknown' });
