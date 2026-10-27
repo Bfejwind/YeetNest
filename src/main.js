@@ -241,7 +241,7 @@ function render() {
   });
   installMarketUI({ page, mode, moderation: config?.moderationService, coins: allCoins(), esc, money, image, openCoin: detail, toast, setWatchlist: values => { watchlist = values; render(); }, navigate: next => { page = next; render(); } });
   if (chain.hostedDemo) document.querySelector(".content").insertAdjacentHTML("afterbegin", '<div class="notice">Online demo. Launches, artwork and simulated trades stay in this browser. Mainnet trading is not enabled.</div>');
-  if (page === 'Creator Studio') mountSchedule({ launch, esc, toast, render, connect: async () => {
+  if (page === 'Creator Studio') mountSchedule({ launch, esc, toast, render, serverAutomation: config?.serverAutomation === true, connect: async () => {
     if (localStorage.getItem('memepop-wallet') !== 'Phantom' || !chain.publicKey) {
       await chain.connectWallet('Phantom'); walletEpoch++; bindWalletEvents();
     }
@@ -830,7 +830,7 @@ function launch(options = {}) {
         scheduleForm.elements.ticker.readOnly = true;
       }
       if (Number.isInteger(editSlot)) {
-        scheduleForm.querySelector('[type=submit]').textContent = 'Save weekday template';
+        scheduleForm.querySelector('[type=submit]').textContent = 'Save daily template';
       }
       const uploadNotice = document.querySelector("#launch-form .notice");
       if (uploadNotice) uploadNotice.textContent = "Configure Pinata or a public upload domain in Integrations.";
@@ -857,7 +857,7 @@ function launch(options = {}) {
             fields.initialBuy = '0';
             state.templates[editSlot] = { fields, image: uploaded };
             saveSchedule(state);
-            closeModal(); render(); toast('Weekday template saved. Scheduled launches have no initial buy.');
+            closeModal(); render(); toast('Daily template saved. Scheduled launches have no initial buy.');
             return;
           }
           if (mode === "demo") {
@@ -1385,7 +1385,7 @@ setInterval(() => {
 // One prompt at a time. No background signing, catch-up launches, or unattended spending.
 let weekdayPrompt = '';
 setInterval(() => {
-  if (document.hidden || document.querySelector('.overlay')) return;
+  if (!config || config.serverAutomation || document.hidden || document.querySelector('.overlay')) return;
   try {
     const job = nextScheduled();
     if (!job || weekdayPrompt === job.key) return;

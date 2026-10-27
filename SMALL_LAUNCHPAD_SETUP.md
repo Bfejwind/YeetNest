@@ -15,7 +15,7 @@ The existing `render.yaml` keeps the old service names deliberately. A worker wh
 1. Open your Solana RPC provider dashboard (for example, your existing Helius account). Select the mainnet project and copy the HTTPS RPC URL privately. Set request/spend alerts and check archive/history availability. Never paste the URL's API key into chat or Git. A free provider tier may be usable for tests but must have enough capacity for both web traffic and indexing.
 2. Open your Pinata dashboard. Obtain a server JWT with only the upload permissions the app needs. Keep it private. Configure storage/spend alerts.
 3. Open your Jupiter developer account and obtain its API key for supported market-token routes. Keep it server-side. An API key does not complete the project's unfinished broad route-security policy.
-4. Rotate any credentials previously exposed. Never supply wallet private keys or recovery phrases to the application server.
+4. Rotate any credentials previously exposed. Never supply personal wallet private keys or recovery phrases to the web service. The optional automation Cron Job uses only its separate limited-funds signing key, as described below.
 
 ## 3. Connect PostgreSQL
 
@@ -158,24 +158,58 @@ Test a controlled service/worker restart and a database restore. Set moderation,
 - Health checks: https://render.com/docs/health-checks
 - Compute plans: https://render.com/docs/compute-plans
 
-## Weekday launches with Phantom approvals
+## Daily launches
 
-1. Deploy the updated frontend, including `public/weekday-animals`.
-2. Open Creator Studio -> Weekday launches. Animal artwork rotation is checked by default. Empty slots use animal-themed names/tickers; Each rotating portrait supplies its matching animal name and ticker. Edit template lets you save descriptions and social links. Turn rotation off to use custom names and tickers. Scheduled launches have no initial purchase.
-3. Select **Connect Phantom and enable** and approve connection/login for the intended wallet.
-4. Keep the site open and visible. From **9:25 a.m. Asia/Singapore, Monday-Friday**, it prepares the next slot through the existing simulation/review flow. Select **Sign and launch** and approve Phantom. The second slot is offered after the first completes.
-5. Pause stops future scheduled submissions. Closing a review can be resumed with **Review next due launch**. A locked/disconnected wallet requires interaction. Nothing signs while the browser is closed; missed days are skipped.
+The browser schedule now prepares **five coins every day, including weekends, from 9:15 a.m. Asia/Singapore**. Open Creator Studio -> Daily launches. The ten animal portraits rotate in two sets of five on alternating calendar days, with matching names and tickers. Saved descriptions and social links are preserved.
 
-The ten bundled sunglasses animal portraits rotate in pairs and repeat weekly:
+Select Connect Phantom and enable to use the existing approval-based flow. Keep the website open and visible; each launch still requires Sign and launch plus Phantom approval. Missed dates are skipped. Scheduled launches have no initial purchase. All five templates must be saved if animal rotation is disabled. Existing two-slot schedules are expanded to five slots without clearing attempt history.
 
-| Day | Slot 1 | Slot 2 |
-| --- | --- | --- |
-| Monday | Golden retriever | Ginger kitten |
-| Tuesday | Rabbit | Red panda |
-| Wednesday | Otter | Hedgehog |
-| Thursday | Corgi | Capybara |
-| Friday | Raccoon | Koala |
+Unattended server signing is implemented but disabled by default. The approved cap is 0.01 SOL per day with no initial token purchases. Follow the Cron Job setup below; a dedicated automation wallet, migration 015, and operational database/hosting are required.
 
-Uncheck **Rotate animal sunglasses artwork** to use your saved artwork instead; save both custom templates before enabling that mode. Artwork is bundled with the website; no daily image-generation API request or API key is needed.
+Templates and attempt history are browser-local. Use one browser/device. Rejected or unresolved attempts are held rather than replaced automatically. Use Transaction recovery and Launch recovery; never clear browser storage to retry. Pause stops future browser submissions. No new database migration is required for the browser schedule changes.
 
-Templates, schedule and attempt history are local to this browser and bound to the chosen wallet. Enable on only one browser/device: this is not a server-wide launch limit. Each slot is recorded before signing. Rejected or unresolved attempts are held rather than automatically replaced; a rejected attempt consumes that day's slot. Use Transaction recovery and Launch recovery. Do not clear browser storage to retry. Browser storage and Web Locks support are required. No new server credentials, worker configuration or migration is required.
+## Unattended daily creation: 0.01 SOL maximum, no buys
+
+The server implementation targets five standard Pump creations every day from **9:15 a.m. Singapore time**. It uses the ten bundled animal portraits and matching names/tickers. It never requests an initial buy, adds liquidity, or calls a trade builder. **Five creations are a target, not a guarantee: rent, fees, unavailable providers or failed simulation can stop the day early. The 0.01 SOL limit takes priority.**
+
+### Before enabling
+
+1. Keep PostgreSQL operational: upgrade or migrate the expiring Render database first. Back up and restore-test the intended database, then apply migration **015** with `npm run db:migrate`. Do not edit earlier applied SQL files. Migration 015 has been applied to the locally configured database after a private snapshot backup and typed temporary-table restore check. Confirm Render uses that same database; otherwise back up and migrate its destination separately. No funded transaction has been performed.
+2. Use the chosen Phantom Solana account as the automation account: set its public address as `AUTOLAUNCH_WALLET` and privately configure its exported account signing key as `AUTOLAUNCH_SECRET_KEY` on the Cron Job only. Do not share that key in chat or use a recovery phrase. Exporting an account key gives the worker control of that account; the daily budget is enforced by this implementation, not by a restriction on the key itself. As an alternative, create a separate limited-funds wallet locally with `npm run autolaunch:wallet`. It creates `data/automation-wallet.json` with exclusive creation and prints only the public address. Existing wallet files are never overwritten. Keep this ignored file private and backed up. The locally generated wallet is not automatically substituted for your selected Phantom account. Never supply a recovery phrase.
+3. In Creator Studio, pause any existing browser schedule before switching. On the Render **web service**, set `AUTOLAUNCH_ENABLED=true` and deploy the updated frontend/server. This flag displays the server-mode notice and disables browser scheduling. The web service must NOT receive the automation signing secret.
+4. Create one Render **Cron Job** from this repository, using the same region and deployment branch. Review its displayed hosting cost before creation. Build: `npm ci`. Command: `npm run autolaunch`. Schedule: **`15 1 * * *`**, which is 01:15 UTC / 09:15 Singapore every day. Leave it disabled until the settings below and your wallet funding are ready. The cron runs once, polls pending signatures for up to approximately ten minutes, and exits. It is not an always-running daemon. If a transaction remains pending, rerun the same job that day to recover its identical saved transaction; do not clear its journal.
+5. Give the Cron Job only these environment variables:
+
+| Variable | Value |
+| --- | --- |
+| NODE_ENV | `production` |
+| DATABASE_URL | The same operational PostgreSQL database as web/indexer |
+| SOLANA_RPC_URL | Dedicated mainnet RPC URL |
+| PINATA_JWT | Upload-only private JWT |
+| RPC_SHARED_INTERVAL_MS | Same shared RPC setting as web/indexer, initially `500` |
+| AUTOLAUNCH_ENABLED | `true` only when ready to run |
+| AUTOLAUNCH_DAILY_BUDGET_SOL | `0.01` |
+| AUTOLAUNCH_INITIAL_BUY_SOL | `0` (nonzero values are rejected) |
+| AUTOLAUNCH_WALLET | Public address printed by the wallet setup command |
+| AUTOLAUNCH_SECRET_KEY | Selected Phantom account export in base58, or dedicated wallet JSON; enter privately into Render, never chat/source/Git |
+
+6. Fund ONLY the dedicated automation wallet with an amount you are willing to allocate. Do not fund the derived daily payer addresses separately. Enable the Cron Job after reviewing the public wallet address and all settings. A browser or Phantom popup is not required.
+7. Inspect job logs and run `npm run autolaunch:status` with the intended database configured. Status output includes public wallet/mint/signature addresses, reserved costs and blocked reasons; it never prints private keys or signed transaction payloads. Confirm real outcomes on Solscan. Live acceptance testing remains to be completed with funded transactions.
+
+### How the budget is bounded
+
+The signing wallet makes at most one recorded funding transfer per Singapore date: **0.0099 SOL** to a deterministic daily payer, with the funding fee capped at **0.0001 SOL**. Only that daily payer signs creations; the dedicated root wallet is the on-chain creator and does not pay their transaction fees. Daily funding plus its maximum fee is therefore at most **0.01 SOL**. Network fees, including fees for failed transactions, and account rent come from the daily allowance. The unused funding-fee reserve is not made available for extra launches. Unused SOL stays in that derived payer; it is not automatically swept or reused on another date. Keep the dedicated key backup to retain control of these derived payers and creator fees.
+
+Each creation is simulated, its full payer debit plus a conservative fee margin is reserved, and its signed bytes and signature are stored in PostgreSQL before sending. An unresolved attempt keeps its reservation. Failures and expired attempts consume a slot; the worker never automatically replaces their mint or tops up the daily payer. The worker accepts only its locally built Pump `create_v2` plus bounded compute-budget instructions, with no buy instruction. Metadata uploads are cached for reuse; Pinata/RPC/hosting charges are outside the SOL transaction budget.
+
+Only one worker can hold the database automation lock. Never delete/reset automation journals, switch to an empty database, or restore a stale backup and resume blindly: reconcile the recorded public signatures first. Prior transaction history on an otherwise empty derived payer blocks new funding after a lost journal. All wallets and secrets must stay fixed during a day's run. Older days are checked for status/listing recovery only; no old transaction is rebroadcast and no missed date is funded. A database/RPC failure stops processing. Keep the automation signing key off the public web service and indexer.
+
+To stop future creation, suspend the Cron Job and set its `AUTOLAUNCH_ENABLED=false`. Already submitted on-chain transactions cannot be cancelled by this switch. Keep `AUTOLAUNCH_ENABLED=true` on the web service while investigating so an old browser schedule cannot start additional launches. Changing the web flag alone does not stop the Cron Job. Browser/manual launches are separate actions and are not covered by the server's daily allowance.
+
+Render Cron Job schedules use UTC: https://render.com/docs/cronjobs .
+
+Run `npm run autolaunch:check` in the configured automation environment before enabling the Cron Job. It checks schema, mainnet, public-address/key match and funding without sending transactions. The local generated data/automation-wallet.json is unused when a different Phantom account is selected.
+
+### Current activation progress
+
+The locally configured database has migration 015. Its pre-migration snapshot is in ignored `data/backups/`; verification restored all 21,613 rows into typed temporary tables without changing live data. This is a data restore check, not a full disaster-recovery test of a separate database. `npm run autolaunch:check` confirms database schema, mainnet RPC and Pinata presence. The selected Phantom public address and matching signing key are not configured yet, and automation is disabled. Connect Render to finish Cron Job and web-service settings; enter the selected account key privately only on that Cron Job.

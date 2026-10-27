@@ -14,10 +14,16 @@
     "test:pilot": "node --test tests/indexer-error.test.js tests/indexer-rpc-fetch.test.js tests/pilot-overload.test.js",
     "charts:backfill": "node server/chart-backfill.js",
     "db:import-catalogue": "node server/import-catalogue.js",
-    "test": "node --test tests/amounts.test.js tests/api.test.js tests/app-store.test.js tests/buffers.test.js tests/wallet-links.test.js tests/transactions.test.js tests/security-store.test.js tests/indexer.test.js tests/launch-validation.test.js tests/launch-purchases.test.js tests/claim-validation.test.js tests/market-feed.test.js tests/catalogue.test.js tests/pump.test.js tests/token-metadata.test.js tests/chart-candles.test.js tests/market-provider-cache.test.js tests/pumpswap-indexer.test.js",
+    "test": "node --test tests/amounts.test.js tests/api.test.js tests/app-store.test.js tests/buffers.test.js tests/wallet-links.test.js tests/transactions.test.js tests/security-store.test.js tests/indexer.test.js tests/launch-validation.test.js tests/launch-purchases.test.js tests/claim-validation.test.js tests/market-feed.test.js tests/catalogue.test.js tests/pump.test.js tests/token-metadata.test.js tests/chart-candles.test.js tests/market-provider-cache.test.js tests/pumpswap-indexer.test.js tests/automation.test.js tests/weekday-launches.test.js",
     "test:catalogue": "node --test tests/catalogue.test.js",
     "test:postgres": "node --test tests/postgres.test.js",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "autolaunch": "node server/autolaunch.js",
+    "autolaunch:status": "node server/autolaunch.js --status",
+    "test:automation": "node --test tests/automation.test.js tests/weekday-launches.test.js",
+    "autolaunch:wallet": "node server/automation-wallet.js",
+    "autolaunch:check": "node server/automation-check.js",
+    "autolaunch:backup": "node server/automation-backup.js"
   },
   "dependencies": {
     "@coral-xyz/borsh": "0.32.1",

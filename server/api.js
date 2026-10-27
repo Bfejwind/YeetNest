@@ -373,6 +373,7 @@ export function createApi({
       community: true,
       moderationService: moderators.length > 0,
       marketEvents: Boolean(marketFeed),
+      serverAutomation: config.AUTOLAUNCH_ENABLED === 'true',
       launchProtocol: 'pump',
       tradingProtocols: ['Pump', 'PumpSwap', 'Raydium LaunchLab (legacy)', 'Jupiter (legacy/market tokens)'],
       indexProtocol,

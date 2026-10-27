@@ -406,3 +406,11 @@ test('RPC proxy forwards priority fee estimation without caching its response', 
   });
   assert.equal(calls, 2);
 });
+
+test('automation status exposes only mode, not signing configuration',async()=>{
+ await withApi(async()=>ok({}),async request=>{
+  const result=await (await request('/status')).json();
+  assert.equal(result.serverAutomation,true);
+  assert.ok(!JSON.stringify(result).includes('private-test-value'));
+ },{AUTOLAUNCH_ENABLED:'true',AUTOLAUNCH_SECRET_KEY:'private-test-value'});
+});
