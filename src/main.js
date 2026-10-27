@@ -1,4 +1,4 @@
-import { configureScheduleWallet, loadSchedule, saveSchedule, mountSchedule, nextScheduled, executeScheduled } from './weekday-launches.js';
+import { configureScheduleWallet, rotatingTemplate, loadSchedule, saveSchedule, mountSchedule, nextScheduled, executeScheduled } from './weekday-launches.js';
 import { createIcons, icons } from "./ui-icons.js";
 import brandLogo from '../logo.png';
 import { isRealCoin, mergeCoin } from './coin-catalogue.js';
@@ -790,7 +790,7 @@ async function normalizeImage(file) {
 }
 function launch(options = {}) {
   const { editSlot, job } = options;
-  const template = job?.template || (Number.isInteger(editSlot) ? loadSchedule().templates[editSlot] : null);
+  const template = job?.template || (Number.isInteger(editSlot) ? (loadSchedule().rotateAnimals ? rotatingTemplate(editSlot, new Date(), loadSchedule().templates[editSlot]) : loadSchedule().templates[editSlot]) : null);
   let uploaded = template?.image || "";
   let uploadedMetadata = null, uploadedMetadataKey = '';
   modal(
@@ -825,6 +825,10 @@ function launch(options = {}) {
         scheduleForm.elements.image.required = false;
         document.querySelector('#upload-preview').innerHTML = `<img src="${esc(uploaded)}" alt="Saved artwork"/>`;
       }
+      if (job || (Number.isInteger(editSlot) && loadSchedule().rotateAnimals)) {
+        scheduleForm.elements.name.readOnly = true;
+        scheduleForm.elements.ticker.readOnly = true;
+      }
       if (Number.isInteger(editSlot)) {
         scheduleForm.querySelector('[type=submit]').textContent = 'Save weekday template';
       }
@@ -840,6 +844,11 @@ function launch(options = {}) {
         if (button.disabled) return;
         button.disabled = true;
         try {
+          if (uploaded.startsWith('/weekday-animals/')) {
+            const response = await fetch(uploaded);
+            if (!response.ok) throw new Error('Animal artwork could not be loaded. Refresh and retry.');
+            uploaded = await normalizeImage(await response.blob());
+          }
           if (Number.isInteger(editSlot)) {
             if (!uploaded) throw new Error('Choose artwork for this template.');
             const state = loadSchedule();

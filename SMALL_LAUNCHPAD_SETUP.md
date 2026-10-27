@@ -160,8 +160,22 @@ Test a controlled service/worker restart and a database restore. Set moderation,
 
 ## Weekday launches with Phantom approvals
 
-In Creator Studio, open Weekday launches and save both templates, including artwork. Connect the intended Phantom wallet and select **Connect Phantom and enable**; approve login if prompted. The templates reuse their name, ticker, description, social links and artwork each weekday. Scheduled launches have no initial purchase.
+1. Deploy the updated frontend, including `public/weekday-animals`.
+2. Open Creator Studio -> Weekday launches. Animal artwork rotation is checked by default. Empty slots use animal-themed names/tickers; Each rotating portrait supplies its matching animal name and ticker. Edit template lets you save descriptions and social links. Turn rotation off to use custom names and tickers. Scheduled launches have no initial purchase.
+3. Select **Connect Phantom and enable** and approve connection/login for the intended wallet.
+4. Keep the site open and visible. From **9:25 a.m. Asia/Singapore, Monday-Friday**, it prepares the next slot through the existing simulation/review flow. Select **Sign and launch** and approve Phantom. The second slot is offered after the first completes.
+5. Pause stops future scheduled submissions. Closing a review can be resumed with **Review next due launch**. A locked/disconnected wallet requires interaction. Nothing signs while the browser is closed; missed days are skipped.
 
-Keep this site open. From 9:00 a.m. Asia/Singapore on Monday–Friday, it prepares the next slot and shows the existing simulation/review screen. Select **Sign and launch** and approve Phantom. The second slot is offered after the first completes. Reconnection uses the existing trusted-wallet restore flow; a locked/disconnected wallet requires interaction. Nothing signs while the browser is closed. Missed days are skipped; closing a review can be resumed using **Review next due launch** in Creator Studio. Pause stops future scheduled submissions.
+The ten bundled sunglasses animal portraits rotate in pairs and repeat weekly:
 
-Templates, schedule and attempt history are local to this browser, bound to the chosen wallet. Do not enable the same schedule on multiple browsers/devices: this is not a server-wide launch limit. Each slot is recorded before signing. Rejected or unresolved attempts are held for recovery rather than automatically replaced; a rejected attempt consumes that day's slot. Use the existing Transaction recovery and Launch recovery flows. Do not clear browser storage to retry. Browser storage must be available and Web Locks must be supported. No new server credentials, worker configuration or migration is required.
+| Day | Slot 1 | Slot 2 |
+| --- | --- | --- |
+| Monday | Golden retriever | Ginger kitten |
+| Tuesday | Rabbit | Red panda |
+| Wednesday | Otter | Hedgehog |
+| Thursday | Corgi | Capybara |
+| Friday | Raccoon | Koala |
+
+Uncheck **Rotate animal sunglasses artwork** to use your saved artwork instead; save both custom templates before enabling that mode. Artwork is bundled with the website; no daily image-generation API request or API key is needed.
+
+Templates, schedule and attempt history are local to this browser and bound to the chosen wallet. Enable on only one browser/device: this is not a server-wide launch limit. Each slot is recorded before signing. Rejected or unresolved attempts are held rather than automatically replaced; a rejected attempt consumes that day's slot. Use Transaction recovery and Launch recovery. Do not clear browser storage to retry. Browser storage and Web Locks support are required. No new server credentials, worker configuration or migration is required.

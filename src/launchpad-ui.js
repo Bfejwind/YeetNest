@@ -82,7 +82,7 @@ export function installLaunchpadUI(context) {
     }
     let pending;
     try { pending = JSON.parse(localStorage.getItem('yn-pending-registration') || 'null'); } catch { pending = null; }
-    if (mode === 'live' && pending?.wallet === chain.publicKey?.toBase58()) {
+    if (mode === 'live' && pending && chain.publicKey && pending.wallet === chain.publicKey.toBase58()) {
       document.querySelector('.content').insertAdjacentHTML('beforeend', `<section class="setup-section"><div class="section-heading"><h2>Launch recovery</h2><button class="secondary" id="recover-listing">${icon('refresh-cw')} Check creation and recover listing</button></div><a href="https://solscan.io/token/${esc(pending.mint)}" target="_blank" rel="noopener noreferrer">${esc(pending.mint)}</a></section>`);
       document.querySelector('#recover-listing').onclick = async event => {
         const button = event.currentTarget;
