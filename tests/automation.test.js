@@ -157,3 +157,16 @@ test('expired slot releases its old reservation before continuing a budget-block
  f.records.set('2026-10-27',{day:'2026-10-27',wallet:f.root.publicKey.toBase58(),payer:f.payer.publicKey.toBase58(),cap:DAILY_CAP,funding:{state:'confirmed'},blocked:{slot:1,reason:'DAILY_CREATION_BUDGET_EXHAUSTED'},slots:[{state:'expired',signature:'expired',mint:Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:100,reserve:DAILY_ALLOWANCE}]});
  let state;for(let i=0;i<8;i++)state=await runAutomationDay(f);assert.equal(state,'done');assert.equal(f.registered.length,5);assert.equal(f.records.get('2026-10-27').expiredAttempts.length,1);
 });
+
+
+test('freshly signed journal bytes are submitted before extra status RPCs',async()=>{
+ const f=fixture();const record=await buildFunding(f.connection,f.root,f.payer);
+ f.connection.getSignatureStatuses=async()=>{throw Error('must submit first');};
+ await reconcile(f.connection,record,{resend:true});assert.equal(f.sends.length,1);assert.equal(record.state,'pending');
+});
+
+test('creation signs and journals the refreshed blockhash after simulation',async()=>{
+ const f=fixture();f.balances.set(f.payer.publicKey.toBase58(),DAILY_ALLOWANCE);let calls=0;const hashes=[Keypair.generate().publicKey.toBase58(),Keypair.generate().publicKey.toBase58()];f.connection.getLatestBlockhash=async()=>({blockhash:hashes[calls++],lastValidBlockHeight:100+calls});
+ const metadata=await f.metadataFor({fields:{name:'Test',ticker:'TEST'},image:'/test.png'});const record=await buildCreation(f.connection,f.pump,f.payer,f.root.publicKey,metadata,DAILY_ALLOWANCE);
+ assert.equal(record.blockhash,hashes[1]);assert.equal(VersionedTransaction.deserialize(Buffer.from(record.raw,'base64')).message.recentBlockhash,hashes[1]);assert.equal(calls,2);
+});

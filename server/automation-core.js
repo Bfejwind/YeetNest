@@ -41,7 +41,9 @@ export async function buildFunding(connection, root, payer) {
   transaction.sign([root]);
   const simulation = await connection.simulateTransaction(transaction, { sigVerify: true, commitment: 'confirmed' });
   if (simulation.value.err) throw stop('FUNDING_SIMULATION_FAILED');
-  return pack(transaction, validity, { allowance: DAILY_ALLOWANCE, fee });
+  const fresh = await connection.getLatestBlockhash('confirmed');
+  transaction.message.recentBlockhash = fresh.blockhash; transaction.sign([root]);
+  return pack(transaction, fresh, { allowance: DAILY_ALLOWANCE, fee });
 }
 // A one-time upgrade for journals funded under the previous 0.01 SOL policy.
 // The delta is journaled before broadcast and never reconstructed after ambiguity.
@@ -62,7 +64,9 @@ export async function buildAllowanceIncrease(connection, root, payer, journal) {
   transaction.sign([root]);
   const simulation = await connection.simulateTransaction(transaction,{sigVerify:true,commitment:'confirmed'});
   if (simulation.value.err) throw stop('FUNDING_SIMULATION_FAILED');
-  return pack(transaction,validity,{allowance,fee});
+  const fresh = await connection.getLatestBlockhash('confirmed');
+  transaction.message.recentBlockhash = fresh.blockhash; transaction.sign([root]);
+  return pack(transaction,fresh,{allowance,fee});
 }
 export async function buildCreation(connection, pump, payer, creator, metadata, remaining) {
   const mint = Keypair.generate();
@@ -89,10 +93,18 @@ export async function buildCreation(connection, pump, payer, creator, metadata, 
   // Conservatively reserve the simulated full debit plus another network fee and a small margin.
   const reserve = before - after + fee + 20000;
   if (reserve > remaining || reserve > before) throw stop('DAILY_CREATION_BUDGET_EXHAUSTED');
-  return pack(transaction, validity, { reserve, mint: mint.publicKey.toBase58(), poolId: pump.bondingCurvePda(mint.publicKey).toBase58(), metadata });
+  const fresh = await connection.getLatestBlockhash('confirmed');
+  transaction.message.recentBlockhash = fresh.blockhash; transaction.sign([payer,mint]);
+  return pack(transaction, fresh, { reserve, mint: mint.publicKey.toBase58(), poolId: pump.bondingCurvePda(mint.publicKey).toBase58(), metadata });
 }
 export async function reconcile(connection, record, { resend = false } = {}) {
   if (['confirmed', 'failed', 'expired'].includes(record.state)) return;
+  if (record.state === 'signed' && resend) {
+    // Submit freshly journaled bytes immediately; extra status RPCs can consume
+    // the blockhash lifetime when the shared RPC budget is busy.
+    try { await connection.sendRawTransaction(Buffer.from(record.raw,'base64'),{skipPreflight:false,maxRetries:0}); } catch { /* Reconcile the same signature next time. */ }
+    record.state = 'pending'; return;
+  }
   const status = (await connection.getSignatureStatuses([record.signature], { searchTransactionHistory: true })).value[0];
   if (status?.confirmationStatus === 'finalized') { record.state = status.err ? 'failed' : 'confirmed'; return; }
   // A processed/confirmed error is still held until finalized; never build a replacement.
