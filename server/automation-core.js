@@ -1,16 +1,16 @@
 import { createHmac } from 'node:crypto';
-import { Keypair, ComputeBudgetProgram, SystemProgram, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
+import { Keypair, PublicKey, ComputeBudgetProgram, SystemProgram, TransactionMessage, VersionedTransaction } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { DAILY_LAUNCH_COUNT, rotatingTemplate, singaporeDay } from '../src/daily-launch-plan.js';
 import { validateLocalInstructions } from '../src/pump-validation.js';
 
-export const DAILY_CAP = 10_000_000; // 0.01 SOL, including funding and creation fees/rent.
+export const DAILY_CAP = 20_000_000; // 0.02 SOL, including funding and creation fees/rent.
 export const FUNDING_FEE_RESERVE = 100_000;
 export const DAILY_ALLOWANCE = DAILY_CAP - FUNDING_FEE_RESERVE;
 const MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
 export function stop(code) { return Object.assign(new Error(code), { automationCode: code }); }
 export function readAutomationWallet(env) {
-  if (env.AUTOLAUNCH_DAILY_BUDGET_SOL && env.AUTOLAUNCH_DAILY_BUDGET_SOL !== '0.01') throw stop('DAILY_BUDGET_MUST_BE_001_SOL');
+  if (env.AUTOLAUNCH_DAILY_BUDGET_SOL && env.AUTOLAUNCH_DAILY_BUDGET_SOL !== '0.02') throw stop('DAILY_BUDGET_MUST_BE_002_SOL');
   if (env.AUTOLAUNCH_INITIAL_BUY_SOL && !/^0+(\.0+)?$/.test(env.AUTOLAUNCH_INITIAL_BUY_SOL)) throw stop('TOKEN_PURCHASES_FORBIDDEN');
   try {
     const value = env.AUTOLAUNCH_SECRET_KEY || '';
@@ -42,6 +42,27 @@ export async function buildFunding(connection, root, payer) {
   const simulation = await connection.simulateTransaction(transaction, { sigVerify: true, commitment: 'confirmed' });
   if (simulation.value.err) throw stop('FUNDING_SIMULATION_FAILED');
   return pack(transaction, validity, { allowance: DAILY_ALLOWANCE, fee });
+}
+// A one-time upgrade for journals funded under the previous 0.01 SOL policy.
+// The delta is journaled before broadcast and never reconstructed after ambiguity.
+export async function buildAllowanceIncrease(connection, root, payer, journal) {
+  const previous = journal.funding;
+  if (previous?.state !== 'confirmed' || previous.allowance !== 9_900_000 || !Number.isSafeInteger(previous.fee) || previous.fee < 0 || previous.fee > FUNDING_FEE_RESERVE) throw stop('INVALID_PREVIOUS_FUNDING');
+  const balance = await connection.getBalance(root.publicKey,'confirmed');
+  const minimum = await connection.getMinimumBalanceForRentExemption(0,'confirmed');
+  // Preserve the source account's rent minimum and the remaining fee reserve.
+  const allowance = Math.min(DAILY_ALLOWANCE - previous.allowance,balance - minimum - (FUNDING_FEE_RESERVE - previous.fee));
+  if (!Number.isSafeInteger(allowance) || allowance <= 0) throw stop('AUTOMATION_WALLET_INSUFFICIENT_SOL');
+  const validity = await connection.getLatestBlockhash('confirmed');
+  const instructions = [SystemProgram.transfer({fromPubkey:root.publicKey,toPubkey:payer.publicKey,lamports:allowance})];
+  const transaction = new VersionedTransaction(new TransactionMessage({payerKey:root.publicKey,recentBlockhash:validity.blockhash,instructions}).compileToV0Message());
+  const fee = (await connection.getFeeForMessage(transaction.message,'confirmed')).value;
+  if (!Number.isSafeInteger(fee) || fee < 0 || previous.fee + fee > FUNDING_FEE_RESERVE) throw stop('FUNDING_FEE_EXCEEDS_RESERVED_BUDGET');
+  if (await connection.getBalance(root.publicKey,'confirmed') < allowance + fee) throw stop('AUTOMATION_WALLET_INSUFFICIENT_SOL');
+  transaction.sign([root]);
+  const simulation = await connection.simulateTransaction(transaction,{sigVerify:true,commitment:'confirmed'});
+  if (simulation.value.err) throw stop('FUNDING_SIMULATION_FAILED');
+  return pack(transaction,validity,{allowance,fee});
 }
 export async function buildCreation(connection, pump, payer, creator, metadata, remaining) {
   const mint = Keypair.generate();
@@ -96,7 +117,15 @@ export async function runAutomationDay({ store, connection, root, pump, metadata
     journal = { day: day.date, wallet: root.publicKey.toBase58(), payer: payer.publicKey.toBase58(), cap: DAILY_CAP, initialBuy: '0', slots: [] };
     await store.save(day.date, journal);
   }
-  if (journal.wallet !== root.publicKey.toBase58() || journal.payer !== payer.publicKey.toBase58() || journal.cap !== DAILY_CAP) throw stop('JOURNAL_WALLET_OR_POLICY_MISMATCH');
+  if (journal.wallet !== root.publicKey.toBase58() || journal.payer !== payer.publicKey.toBase58()) throw stop('JOURNAL_WALLET_OR_POLICY_MISMATCH');
+  if (journal.cap === 10_000_000) {
+    // Preserve all signed work. Only the specifically authorized old cap can migrate.
+    if (journal.funding) journal.previousCap = journal.cap;
+    journal.cap = DAILY_CAP;
+    if (journal.blocked?.reason === 'DAILY_CREATION_BUDGET_EXHAUSTED') delete journal.blocked;
+    await store.save(day.date,journal);
+  }
+  if (journal.cap !== DAILY_CAP) throw stop('JOURNAL_WALLET_OR_POLICY_MISMATCH');
   if (journal.blocked) return 'blocked';
   const currentDay = () => singaporeDay(now()).date === day.date && singaporeDay(now()).due;
   if (!currentDay()) return 'date-ended';
@@ -108,9 +137,31 @@ export async function runAutomationDay({ store, connection, root, pump, metadata
   await reconcile(connection, journal.funding, { resend: currentDay() });
   await store.save(day.date, journal);
   if (journal.funding.state !== 'confirmed') return ['failed','expired'].includes(journal.funding.state) ? 'funding-stopped' : 'pending';
+  if (journal.previousCap === 10_000_000) {
+    if (!journal.allowanceIncrease) {
+      journal.allowanceIncrease = await buildAllowanceIncrease(connection,root,payer,journal);
+      if (!currentDay()) return 'date-ended';
+      await store.save(day.date,journal);
+    }
+    await reconcile(connection,journal.allowanceIncrease,{resend:currentDay()});
+    await store.save(day.date,journal);
+    if (journal.allowanceIncrease.state !== 'confirmed') return ['failed','expired'].includes(journal.allowanceIncrease.state) ? 'funding-stopped' : 'pending';
+  }
   for (let slot = 0; slot < DAILY_LAUNCH_COUNT; slot++) {
     if (!currentDay()) return 'date-ended';
     let record = journal.slots[slot];
+    if (record?.state === 'expired') {
+      // Replace only after expiry, absent signature history and absent mint.
+      if (await connection.getBlockHeight('finalized') <= record.lastValidBlockHeight) return 'pending';
+      const status = (await connection.getSignatureStatuses([record.signature],{searchTransactionHistory:true})).value[0];
+      const transaction = await connection.getTransaction(record.signature,{commitment:'finalized',maxSupportedTransactionVersion:0});
+      const mint = await connection.getAccountInfo(new PublicKey(record.mint),'finalized');
+      if (status || transaction || mint) throw stop('EXPIRED_CREATION_REQUIRES_RECONCILIATION');
+      (journal.expiredAttempts ||= []).push({...record,slot});
+      journal.slots[slot] = null;
+      await store.save(day.date,journal);
+      record = null;
+    }
     if (!record) {
       const used = journal.slots.reduce((total, row) => total + (row?.reserve || 0), 0);
       const remaining = DAILY_ALLOWANCE - used;
@@ -143,7 +194,9 @@ export async function recoverAutomationDays({ store, connection, root, register,
   for (const journal of await store.recent()) {
     if (journal.day >= today || journal.wallet !== root.publicKey.toBase58()) continue;
     if (journal.funding) await reconcile(connection, journal.funding);
+    if (journal.allowanceIncrease) await reconcile(connection,journal.allowanceIncrease);
     for (const record of journal.slots) {
+      if (!record) continue;
       await reconcile(connection, record);
       if (record.state === 'confirmed' && !record.registered) {
         await register(record, journal.wallet); record.registered = true;

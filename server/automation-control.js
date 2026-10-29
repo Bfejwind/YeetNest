@@ -1,3 +1,4 @@
+import { DAILY_CAP } from './automation-core.js';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openAutomationStore } from './automation-store.js';
@@ -15,9 +16,9 @@ export function installAutomationControl(app, { config, auth, route, fail }) {
     try {
       await store.ready();
       const record = await store.get(day.date);
-      const confirmed = record?.slots.filter(s => s.state === 'confirmed').length || 0;
-      const complete = record?.slots.length === DAILY_LAUNCH_COUNT && record.slots.every(s => s.state === 'confirmed' && s.registered);
-      return { day: day.date, due: day.due, recorded: !!record, confirmed, complete, blocked: record?.blocked?.reason || null, fundingState: record?.funding?.state || 'not-funded', running: !!worker, lastExit, restartConfigured: configured() && operators.length > 0 };
+      const confirmed = record?.slots.filter(s => s?.state === 'confirmed').length || 0;
+      const complete = record?.slots.length === DAILY_LAUNCH_COUNT && record.slots.every(s => s?.state === 'confirmed' && s.registered);
+      return { day: day.date, dailyCapSol: String(DAILY_CAP / 1_000_000_000), due: day.due, recorded: !!record, confirmed, complete, blocked: record?.cap === 10_000_000 && record?.blocked?.reason === 'DAILY_CREATION_BUDGET_EXHAUSTED' ? null : record?.blocked?.reason || null, fundingState: record?.funding?.state || 'not-funded', running: !!worker, lastExit, restartConfigured: configured() && operators.length > 0 };
     } finally { await store.close(); }
   };
   app.get('/api/automation/status', route(async (req, res) => {

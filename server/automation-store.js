@@ -25,7 +25,7 @@ export async function openAutomationStore(databaseUrl) {
     async recent() { return (await client.query('SELECT data FROM automation_days ORDER BY day DESC LIMIT 30')).rows.map(row=>row.data); },
     async summary() {
       const rows = (await client.query('SELECT day,data FROM automation_days ORDER BY day DESC LIMIT 14')).rows;
-      return rows.map(({day,data}) => ({ day, wallet: data.wallet, payer: data.payer, dailyCapSol:'0.01', initialBuySol:'0', fundingState:data.funding?.state || 'not-funded', fundingSignature:data.funding?.signature, blocked:data.blocked, slots:data.slots.map((s,i)=>({slot:i+1,state:s.state,mint:s.mint,signature:s.signature,registered:!!s.registered,reservedLamports:s.reserve})) }));
+      return rows.map(({day,data}) => ({ day, wallet: data.wallet, payer: data.payer, dailyCapSol:String(data.cap / 1_000_000_000), initialBuySol:'0', fundingState:data.funding?.state || 'not-funded', fundingSignature:data.funding?.signature, blocked:data.blocked, slots:data.slots.map((s,i)=>({slot:i+1,state:s?.state || 'not-created',mint:s?.mint,signature:s?.signature,registered:!!s?.registered,reservedLamports:s?.reserve})) }));
     },
     async close() { try { if (locked && !lost) await client.query('SELECT pg_advisory_unlock(741922)'); } finally { await client.end(); } },
   };
