@@ -20,7 +20,7 @@
     "test:ui": "playwright test",
     "autolaunch": "node server/autolaunch.js",
     "autolaunch:status": "node server/autolaunch.js --status",
-    "test:automation": "node --test tests/automation.test.js tests/weekday-launches.test.js",
+    "test:automation": "node --test tests/automation.test.js tests/weekday-launches.test.js tests/automation-control.test.js",
     "autolaunch:wallet": "node server/automation-wallet.js",
     "autolaunch:check": "node server/automation-check.js",
     "autolaunch:backup": "node server/automation-backup.js"

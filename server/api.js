@@ -1,3 +1,4 @@
+import { installAutomationControl } from './automation-control.js';
 import "dotenv/config";
 import express from "express";
 import { marketProviderCache } from './market-provider-cache.js';
@@ -356,6 +357,7 @@ export function createApi({
         imageHosts.add(new URL(config.IPFS_GATEWAY).hostname);
     },
   });
+  installAutomationControl(app, { config, auth, route, fail });
   app.get("/api/status", (req, res) =>
     res.json({
       network: "mainnet-beta",

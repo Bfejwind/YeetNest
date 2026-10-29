@@ -241,7 +241,7 @@ function render() {
   });
   installMarketUI({ page, mode, moderation: config?.moderationService, coins: allCoins(), esc, money, image, openCoin: detail, toast, setWatchlist: values => { watchlist = values; render(); }, navigate: next => { page = next; render(); } });
   if (chain.hostedDemo) document.querySelector(".content").insertAdjacentHTML("afterbegin", '<div class="notice">Online demo. Launches, artwork and simulated trades stay in this browser. Mainnet trading is not enabled.</div>');
-  if (page === 'Creator Studio') mountSchedule({ launch, esc, toast, render, serverAutomation: config?.serverAutomation === true, connect: async () => {
+  if (page === 'Creator Studio') mountSchedule({ launch, esc, toast, render, automationApi: chain.api, authenticateAutomation: chain.authenticate, serverAutomation: config?.serverAutomation === true, connect: async () => {
     if (localStorage.getItem('memepop-wallet') !== 'Phantom' || !chain.publicKey) {
       await chain.connectWallet('Phantom'); walletEpoch++; bindWalletEvents();
     }
