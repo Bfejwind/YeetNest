@@ -37,12 +37,12 @@ test('wallet configuration binds public address, exact cap, and forbids token pu
  const key=Keypair.generate(),env={AUTOLAUNCH_SECRET_KEY:bs58.encode(key.secretKey),AUTOLAUNCH_WALLET:key.publicKey.toBase58()};
  assert.equal(readAutomationWallet(env).publicKey.toBase58(),env.AUTOLAUNCH_WALLET);
  assert.throws(()=>readAutomationWallet({...env,AUTOLAUNCH_INITIAL_BUY_SOL:'0.001'}),/PURCHASES_FORBIDDEN/);
- assert.throws(()=>readAutomationWallet({...env,AUTOLAUNCH_DAILY_BUDGET_SOL:'0.03'}),/BUDGET_MUST/);
+ assert.throws(()=>readAutomationWallet({...env,AUTOLAUNCH_DAILY_BUDGET_SOL:'0.04'}),/BUDGET_MUST/);
  assert.throws(()=>readAutomationWallet({...env,AUTOLAUNCH_WALLET:Keypair.generate().publicKey.toBase58()}),/MISMATCHED/);
  assert.equal(dailyWallet(key,'2026-10-27').publicKey.toBase58(),dailyWallet(key,'2026-10-27').publicKey.toBase58());
  assert.notEqual(dailyWallet(key,'2026-10-28').publicKey.toBase58(),dailyWallet(key,'2026-10-27').publicKey.toBase58());
 });
-test('funding is a single fixed transfer with fees inside total 0.02 SOL and rejects topups',async()=>{
+test('funding is a single fixed transfer with fees inside total 0.03 SOL and rejects topups',async()=>{
  const f=fixture(),record=await buildFunding(f.connection,f.root,f.payer),tx=VersionedTransaction.deserialize(Buffer.from(record.raw,'base64')),message=TransactionMessage.decompile(tx.message);
  assert.equal(message.instructions.length,1);const transfer=SystemInstruction.decodeTransfer(message.instructions[0]);
  assert.equal(Number(transfer.lamports),DAILY_ALLOWANCE);assert.equal(transfer.toPubkey.toBase58(),f.payer.publicKey.toBase58());assert.ok(Number(transfer.lamports)+record.fee<=DAILY_CAP);
@@ -73,11 +73,11 @@ test('five creations survive restarts and repeated runs never fund or create twi
  await runAutomationDay(f);assert.equal(f.sends.length,6);
 });
 test('rent and fee budget stops remaining launches, without increasing funding or buying',async()=>{
- const f=fixture({cost:6_000_000});let state;
+ const f=fixture({cost:9_000_000});let state;
  for(let i=0;i<8;i++) state=await runAutomationDay(f);
  assert.equal(state,'blocked');assert.equal(f.sends.length,4);assert.equal(f.records.get('2026-10-27').slots.length,3);
  const journal=f.records.get('2026-10-27');assert.ok(journal.slots.reduce((sum,s)=>sum+s.reserve,0)<=DAILY_ALLOWANCE);
- assert.equal(journal.initialBuy,'0');assert.equal(journal.cap,20_000_000);
+ assert.equal(journal.initialBuy,'0');assert.equal(journal.cap,30_000_000);
 });
 test('failed journal write prevents broadcast',async()=>{
  const f=fixture();f.store.save=async()=>{throw new Error('database unavailable');};await assert.rejects(runAutomationDay(f),/database unavailable/);assert.equal(f.sends.length,0);
@@ -125,8 +125,8 @@ test('old funded day receives only cap difference and safely replaces a chain-ab
  let state;for(let i=0;i<8;i++)state=await runAutomationDay(f);
  assert.equal(state,'done');assert.equal(f.registered.length,5);
  const journal=f.records.get('2026-10-27');assert.equal(journal.cap,DAILY_CAP);
- assert.equal(journal.allowanceIncrease.allowance,10_000_000);
- assert.ok(journal.funding.allowance+journal.allowanceIncrease.allowance+journal.funding.fee+journal.allowanceIncrease.fee<=DAILY_CAP);
+ assert.equal(journal.allowanceIncreases[0].allowance,20_000_000);
+ assert.ok(journal.funding.allowance+journal.allowanceIncreases[0].allowance+journal.funding.fee+journal.allowanceIncreases[0].fee<=DAILY_CAP);
  assert.equal(journal.expiredAttempts[0].signature,expired.signature);
  const sends=f.sends.length;await runAutomationDay(f);assert.equal(f.sends.length,sends);
 });
@@ -139,7 +139,7 @@ test('expired creation with an existing mint cannot be replaced',async()=>{
 
 test('allowance increase cannot broadcast unless its journal write succeeds',async()=>{
  const f=fixture();f.records.set('2026-10-27',{day:'2026-10-27',wallet:f.root.publicKey.toBase58(),payer:f.payer.publicKey.toBase58(),cap:10_000_000,funding:{state:'confirmed',allowance:9_900_000,fee:5000},slots:[]});
- const save=f.store.save;f.store.save=async(day,value)=>{if(value.allowanceIncrease)throw Error('journal write failed');return save(day,value);};
+ const save=f.store.save;f.store.save=async(day,value)=>{if(value.allowanceIncreases?.length)throw Error('journal write failed');return save(day,value);};
  await assert.rejects(runAutomationDay(f),/journal write failed/);assert.equal(f.sends.length,0);
 });
 
@@ -147,7 +147,7 @@ test('allowance increase cannot broadcast unless its journal write succeeds',asy
 test('allowance increase preserves rent when source cannot provide the full delta',async()=>{
  const f=fixture();f.balances.set(f.root.publicKey.toBase58(),10_095_000);
  f.records.set('2026-10-27',{day:'2026-10-27',wallet:f.root.publicKey.toBase58(),payer:f.payer.publicKey.toBase58(),cap:10_000_000,funding:{state:'confirmed',allowance:9_900_000,fee:5000},slots:[]});
- await runAutomationDay(f);const record=f.records.get('2026-10-27').allowanceIncrease;
+ await runAutomationDay(f);const record=f.records.get('2026-10-27').allowanceIncreases[0];
  assert.equal(record.allowance,9_349_760);assert.ok(record.allowance+record.fee+650240<=10_095_000);
 });
 
@@ -169,4 +169,14 @@ test('creation signs and journals the refreshed blockhash after simulation',asyn
  const f=fixture();f.balances.set(f.payer.publicKey.toBase58(),DAILY_ALLOWANCE);let calls=0;const hashes=[Keypair.generate().publicKey.toBase58(),Keypair.generate().publicKey.toBase58()];f.connection.getLatestBlockhash=async()=>({blockhash:hashes[calls++],lastValidBlockHeight:100+calls});
  const metadata=await f.metadataFor({fields:{name:'Test',ticker:'TEST'},image:'/test.png'});const record=await buildCreation(f.connection,f.pump,f.payer,f.root.publicKey,metadata,DAILY_ALLOWANCE);
  assert.equal(record.blockhash,hashes[1]);assert.equal(VersionedTransaction.deserialize(Buffer.from(record.raw,'base64')).message.recentBlockhash,hashes[1]);assert.equal(calls,2);
+});
+
+
+test('0.02 journal upgrade counts its earlier 0.01 funding increase and never duplicates it',async()=>{
+ const f=fixture();f.balances.set(f.payer.publicKey.toBase58(),19_249_760);
+ f.records.set('2026-10-27',{day:'2026-10-27',wallet:f.root.publicKey.toBase58(),payer:f.payer.publicKey.toBase58(),cap:20_000_000,funding:{state:'confirmed',allowance:9_900_000,fee:5000},allowanceIncrease:{state:'confirmed',allowance:9_349_760,fee:5000},blocked:{slot:3,reason:'CREATION_SIMULATION_FAILED_OR_INSUFFICIENT_BUDGET'},slots:[]});
+ let state;for(let i=0;i<9;i++)state=await runAutomationDay(f);assert.equal(state,'done');
+ const journal=f.records.get('2026-10-27');assert.equal(journal.allowanceIncreases.length,2);assert.equal(journal.allowanceIncreases[0].allowance,9_349_760);assert.equal(journal.allowanceIncreases[1].allowance,10_650_240);
+ const records=[journal.funding,...journal.allowanceIncreases];assert.ok(records.reduce((sum,row)=>sum+row.allowance+row.fee,0)<=DAILY_CAP);
+ const sends=f.sends.length;await runAutomationDay(f);assert.equal(f.sends.length,sends);
 });

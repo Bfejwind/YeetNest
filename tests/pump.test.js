@@ -24,7 +24,7 @@ test('creator claim omits empty AMM accounts and resimulates before wallet signi
       assert.equal(TransactionMessage.decompile(transaction.message).instructions.length, 2);
       return { value: { err: failSimulation ? 'controlled failure' : null } };
     },
-  }, submit: async () => { submissions++; return 'controlled-claim'; } };
+  }, submit: async (transaction, record) => { await record.prepareForSigning?.(); submissions++; return 'controlled-claim'; } };
   const claim = await preparePumpCreatorClaim(context);
   assert.equal(claim.rentReserve, '0');
   assert.equal(await claim.execute(), 'controlled-claim');
@@ -55,7 +55,7 @@ test('Pump adapter fixes buy budget/sell minimum, simulates and binds execution 
     getLatestBlockhash: async () => ({ blockhash: PublicKey.default.toBase58() }), getFeeForMessage: async () => ({ value: 5000 }),
     getMinimumBalanceForRentExemption: async () => 10000000, getBalance: async () => 1000000000,
     getTokenSupply: async () => ({ value: { amount: global.tokenTotalSupply.toString() } }), simulateTransaction: async () => ({ value: { err: null } }),
-  }, submit: async () => { submissions++; return 'controlled-signature'; } };
+  }, submit: async (transaction, record) => { await record.prepareForSigning?.(); submissions++; return 'controlled-signature'; } };
   const coin = { mint: mint.toBase58(), poolId: pump.bondingCurvePda(mint).toBase58(), ticker: 'TEST' };
   const buy = await preparePumpTrade(context, coin, 'Buy', '0.05', 100);
   assert.equal(buy.inputIsMaximum, true);
@@ -127,7 +127,7 @@ test('Pump launch refreshes the blockhash and retains the mint signature before 
     getFeeForMessage: async () => ({ value: 5000 }), getMinimumBalanceForRentExemption: async () => 10000000,
     getBalance: async () => 1000000000,
     simulateTransaction: async () => { simulations++; return { value: { err: null } }; },
-  }, submit: async (transaction, record) => { submitted = transaction; submissionRecord = record; return 'signature'; } };
+  }, submit: async (transaction, record) => { const fresh = await record.prepareForSigning(); submitted = fresh.transaction; submissionRecord = { ...record, ...fresh }; return 'signature'; } };
   const expectedHash = hashes[1];
   const launch = await preparePumpLaunch(context, { name: 'Fresh', ticker: 'FRESH', uri: 'https://example.com/metadata' });
   await launch.execute();

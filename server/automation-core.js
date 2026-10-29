@@ -4,13 +4,13 @@ import bs58 from 'bs58';
 import { DAILY_LAUNCH_COUNT, rotatingTemplate, singaporeDay } from '../src/daily-launch-plan.js';
 import { validateLocalInstructions } from '../src/pump-validation.js';
 
-export const DAILY_CAP = 20_000_000; // 0.02 SOL, including funding and creation fees/rent.
+export const DAILY_CAP = 30_000_000; // 0.03 SOL, including funding and creation fees/rent.
 export const FUNDING_FEE_RESERVE = 100_000;
 export const DAILY_ALLOWANCE = DAILY_CAP - FUNDING_FEE_RESERVE;
 const MAINNET_GENESIS = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d';
 export function stop(code) { return Object.assign(new Error(code), { automationCode: code }); }
 export function readAutomationWallet(env) {
-  if (env.AUTOLAUNCH_DAILY_BUDGET_SOL && env.AUTOLAUNCH_DAILY_BUDGET_SOL !== '0.02') throw stop('DAILY_BUDGET_MUST_BE_002_SOL');
+  if (env.AUTOLAUNCH_DAILY_BUDGET_SOL && env.AUTOLAUNCH_DAILY_BUDGET_SOL !== '0.03') throw stop('DAILY_BUDGET_MUST_BE_003_SOL');
   if (env.AUTOLAUNCH_INITIAL_BUY_SOL && !/^0+(\.0+)?$/.test(env.AUTOLAUNCH_INITIAL_BUY_SOL)) throw stop('TOKEN_PURCHASES_FORBIDDEN');
   try {
     const value = env.AUTOLAUNCH_SECRET_KEY || '';
@@ -45,11 +45,13 @@ export async function buildFunding(connection, root, payer) {
   transaction.message.recentBlockhash = fresh.blockhash; transaction.sign([root]);
   return pack(transaction, fresh, { allowance: DAILY_ALLOWANCE, fee });
 }
-// A one-time upgrade for journals funded under the previous 0.01 SOL policy.
+// Each authorized cap upgrade gets a separately journaled funding delta.
 // The delta is journaled before broadcast and never reconstructed after ambiguity.
 export async function buildAllowanceIncrease(connection, root, payer, journal) {
-  const previous = journal.funding;
-  if (previous?.state !== 'confirmed' || previous.allowance !== 9_900_000 || !Number.isSafeInteger(previous.fee) || previous.fee < 0 || previous.fee > FUNDING_FEE_RESERVE) throw stop('INVALID_PREVIOUS_FUNDING');
+  const records = [journal.funding,...(journal.allowanceIncreases || (journal.allowanceIncrease ? [journal.allowanceIncrease] : []))];
+  if (records.some(row=>row?.state !== 'confirmed' || !Number.isSafeInteger(row.allowance) || row.allowance <= 0 || !Number.isSafeInteger(row.fee) || row.fee < 0)) throw stop('INVALID_PREVIOUS_FUNDING');
+  const previous = records.reduce((sum,row)=>({allowance:sum.allowance+row.allowance,fee:sum.fee+row.fee}),{allowance:0,fee:0});
+  if (previous.allowance >= DAILY_ALLOWANCE || previous.fee > FUNDING_FEE_RESERVE) throw stop('INVALID_PREVIOUS_FUNDING');
   const balance = await connection.getBalance(root.publicKey,'confirmed');
   const minimum = await connection.getMinimumBalanceForRentExemption(0,'confirmed');
   // Preserve the source account's rent minimum and the remaining fee reserve.
@@ -130,11 +132,11 @@ export async function runAutomationDay({ store, connection, root, pump, metadata
     await store.save(day.date, journal);
   }
   if (journal.wallet !== root.publicKey.toBase58() || journal.payer !== payer.publicKey.toBase58()) throw stop('JOURNAL_WALLET_OR_POLICY_MISMATCH');
-  if (journal.cap === 10_000_000) {
-    // Preserve all signed work. Only the specifically authorized old cap can migrate.
-    if (journal.funding) journal.previousCap = journal.cap;
+  if ([10_000_000,20_000_000].includes(journal.cap)) {
+    // Preserve all signed work and count every earlier funding delta.
+    if (journal.funding) { journal.previousCap = journal.cap; journal.budgetIncreasePending = true; }
     journal.cap = DAILY_CAP;
-    if (journal.blocked?.reason === 'DAILY_CREATION_BUDGET_EXHAUSTED') delete journal.blocked;
+    if (['DAILY_CREATION_BUDGET_EXHAUSTED','CREATION_SIMULATION_FAILED_OR_INSUFFICIENT_BUDGET'].includes(journal.blocked?.reason)) delete journal.blocked;
     await store.save(day.date,journal);
   }
   if (journal.cap !== DAILY_CAP) throw stop('JOURNAL_WALLET_OR_POLICY_MISMATCH');
@@ -153,15 +155,25 @@ export async function runAutomationDay({ store, connection, root, pump, metadata
   await reconcile(connection, journal.funding, { resend: currentDay() });
   await store.save(day.date, journal);
   if (journal.funding.state !== 'confirmed') return ['failed','expired'].includes(journal.funding.state) ? 'funding-stopped' : 'pending';
-  if (journal.previousCap === 10_000_000) {
-    if (!journal.allowanceIncrease) {
-      journal.allowanceIncrease = await buildAllowanceIncrease(connection,root,payer,journal);
-      if (!currentDay()) return 'date-ended';
-      await store.save(day.date,journal);
-    }
-    await reconcile(connection,journal.allowanceIncrease,{resend:currentDay()});
+  if (journal.allowanceIncrease) {
+    (journal.allowanceIncreases ||= []).push(journal.allowanceIncrease);
+    delete journal.allowanceIncrease;
     await store.save(day.date,journal);
-    if (journal.allowanceIncrease.state !== 'confirmed') return ['failed','expired'].includes(journal.allowanceIncrease.state) ? 'funding-stopped' : 'pending';
+  }
+  for (const increase of journal.allowanceIncreases || []) {
+    await reconcile(connection,increase,{resend:currentDay()});
+    await store.save(day.date,journal);
+    if (increase.state !== 'confirmed') return ['failed','expired'].includes(increase.state) ? 'funding-stopped' : 'pending';
+  }
+  if (journal.budgetIncreasePending) {
+    const increase = await buildAllowanceIncrease(connection,root,payer,journal);
+    if (!currentDay()) return 'date-ended';
+    (journal.allowanceIncreases ||= []).push(increase);
+    journal.budgetIncreasePending = false;
+    await store.save(day.date,journal);
+    await reconcile(connection,increase,{resend:currentDay()});
+    await store.save(day.date,journal);
+    if (increase.state !== 'confirmed') return ['failed','expired'].includes(increase.state) ? 'funding-stopped' : 'pending';
   }
   for (let slot = 0; slot < DAILY_LAUNCH_COUNT; slot++) {
     if (!currentDay()) return 'date-ended';
@@ -213,6 +225,7 @@ export async function recoverAutomationDays({ store, connection, root, register,
     if (journal.day >= today || journal.wallet !== root.publicKey.toBase58()) continue;
     if (journal.funding) await reconcile(connection, journal.funding);
     if (journal.allowanceIncrease) await reconcile(connection,journal.allowanceIncrease);
+    for (const increase of journal.allowanceIncreases || []) await reconcile(connection,increase);
     for (const record of journal.slots) {
       if (!record) continue;
       await reconcile(connection, record);

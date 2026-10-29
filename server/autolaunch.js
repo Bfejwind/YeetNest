@@ -43,7 +43,7 @@ try {
       await recoverAutomationDays({store,connection,root,register});
       for(let attempt=0;attempt<40&&!shutdown.signal.aborted;attempt++) {
         const state=await runAutomationDay({store,connection,root,pump,metadataFor,register});
-        console.log(JSON.stringify({automation:state,dailyCapSol:'0.02',initialBuySol:'0'}));
+        console.log(JSON.stringify({automation:state,dailyCapSol:'0.03',initialBuySol:'0'}));
         if(state!=='pending') break;
         await sleep(15000,undefined,{signal:shutdown.signal});
       }

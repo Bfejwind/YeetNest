@@ -172,7 +172,7 @@ async function validateWalletSignedMessage(original, signed, context) {
   if (Buffer.from(signed.message.serialize()).equals(original)) {
     const check = await withTimeout(() => simulateSignedFresh(connection, signed), 30000, 'Signed transaction validation timed out. Nothing was broadcast.');
     if (check.value.err) throw new Error(`Signed transaction failed simulation: ${JSON.stringify(check.value.err)}. Nothing was broadcast.`);
-    return false;
+    return { minContextSlot: check.context?.slot || 0 };
   }
   if (!['creator-claim', 'trade', 'swap', 'buy', 'sell', 'initial-buy'].includes(context.operation) || signed.message.header.numRequiredSignatures !== 1) throw new Error('Wallet modified a transaction that cannot be safely adjusted. Nothing was broadcast. Prepare a fresh transaction.');
   const tables = [];
@@ -195,7 +195,7 @@ async function validateWalletSignedMessage(original, signed, context) {
   if (fee === null || fee > 10000000) throw new Error('Wallet-adjusted transaction fee exceeds the 0.01 SOL cap or is unavailable. Nothing was broadcast.');
   const check = await simulateSignedFresh(connection, signed, { minContextSlot: Math.max(valid.context?.slot || 0, feeResult.context?.slot || 0) });
   if (check.value.err) throw new Error(`Wallet-adjusted transaction failed simulation: ${JSON.stringify(check.value.err)}. Nothing was broadcast.`);
-  return true;
+  return { minContextSlot: check.context?.slot || 0 };
 }
 
 async function broadcastAndConfirm(signed, owner, context, onSubmitted = () => {}) {
@@ -203,11 +203,12 @@ async function broadcastAndConfirm(signed, owner, context, onSubmitted = () => {
   const existing = readTransactions().find(row => row.signature === signature);
   if (existing) throw new TransactionOutcomeError(signature, existing.state, 'This signed transaction was already attempted.');
   const raw = signed.serialize();
+  const broadcastOptions = { skipPreflight: context.operation === 'launch', preflightCommitment: 'confirmed', ...(context.minContextSlot > 0 ? { minContextSlot: context.minContextSlot } : {}) };
   const recovery = { lastValidBlockHeight: context.blockhash === signed.message.recentBlockhash ? context.lastValidBlockHeight : undefined, blockhash: signed.message.recentBlockhash, signedTransaction: Buffer.from(raw).toString('base64') };
   onSubmitted(signature, recovery);
   recordTransaction({ ...context, ...recovery, signature, wallet: owner, state: 'submitted', network: 'mainnet-beta' });
   try {
-    const returned = await withTimeout(() => connection.sendRawTransaction(signed.serialize(), { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 3 }), 30000, 'RPC broadcast timed out.');
+    const returned = await withTimeout(() => connection.sendRawTransaction(raw, { ...broadcastOptions, maxRetries: 3 }), 30000, 'RPC broadcast timed out.');
     if (returned !== signature) throw new Error('RPC returned an unexpected signature.');
   } catch {
     recordTransaction({ signature, state: 'unknown' });
@@ -216,7 +217,7 @@ async function broadcastAndConfirm(signed, owner, context, onSubmitted = () => {
   return pollTransaction(connection, signature, {
     recovery,
     onState: state => recordTransaction({ signature, state }),
-    onMissing: () => connection.sendRawTransaction(raw, { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 0 }),
+    onMissing: () => connection.sendRawTransaction(raw, { ...broadcastOptions, maxRetries: 0 }),
   });
 }
 
@@ -225,12 +226,19 @@ export async function submitAndConfirm(transaction, context = {}, onSubmitted = 
   const owner = publicKey.toBase58();
   const signer = provider;
   if (signer.publicKey && signer.publicKey.toString() !== owner) throw new Error('The wallet extension active account differs from the connected account. Reconnect the correct account before signing. Nothing was broadcast.');
+  if (context.prepareForSigning) {
+    const { prepareForSigning, ...record } = context;
+    const fresh = await withTimeout(prepareForSigning, 30000, 'Transaction refresh timed out before wallet approval. Nothing was broadcast. Prepare again.');
+    transaction = fresh.transaction;
+    context = { ...record, blockhash: fresh.blockhash, lastValidBlockHeight: fresh.lastValidBlockHeight };
+    if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed before signing. Nothing was broadcast.');
+  }
   const original = Buffer.from(transaction.message.serialize());
   const signed = await withTimeout(() => signer.signTransaction(transaction), 60000, 'Wallet transaction signing timed out. No transaction was broadcast by this request. Close the pending wallet prompt and recheck wallet activity before preparing again.');
   if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during signing.');
-  await validateWalletSignedMessage(original, signed, context);
+  const validation = await validateWalletSignedMessage(original, signed, context);
   if (publicKey?.toBase58() !== owner || provider !== signer) throw new Error('Wallet changed during transaction validation. Nothing was broadcast.');
-  return broadcastAndConfirm(signed, owner, context, onSubmitted);
+  return broadcastAndConfirm(signed, owner, { ...context, minContextSlot: validation.minContextSlot }, onSubmitted);
 }
 
 export async function recoverTransactions() {

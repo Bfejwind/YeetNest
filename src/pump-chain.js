@@ -60,25 +60,32 @@ async function preparedTransaction(context, instructions, { signers = [], spend 
     ? claimAccounts ? BigInt(await connection.getMinimumBalanceForRentExemption(165)) * BigInt(claimAccounts) : 0n
     : BigInt(await connection.getMinimumBalanceForRentExemption(4096));
   if (BigInt(await connection.getBalance(new PublicKey(owner))) < spend + rentReserve + BigInt(fee)) throw new Error('Insufficient SOL for the input, network fee and account rent reserve.');
-  const simulation = await connection.simulateTransaction(transaction);
+  const simulation = await connection.simulateTransaction(transaction, { replaceRecentBlockhash: true, commitment: 'confirmed' });
   if (simulation.value.err) throw new Error(`Pump simulation failed: ${JSON.stringify(simulation.value.err)}`);
   const expires = Date.now() + 45000;
   let used = false;
   return { expires, networkFee: fromUnits(String(fee), 9), rentReserve: fromUnits(String(rentReserve), 9), async execute() {
     if (used || Date.now() > expires) throw new Error('Pump review used or expired. Prepare again.');
     if (wallet()?.toBase58() !== owner) throw new Error('Wallet changed. Prepare again.');
+    let prepareForSigning;
     if (refreshBeforeSigning) {
-      const fresh = await connection.getLatestBlockhash('confirmed');
-      blockhash = fresh;
-      transaction = new VersionedTransaction(new TransactionMessage({ payerKey: new PublicKey(owner), recentBlockhash: fresh.blockhash, instructions: reviewed }).compileToV0Message());
-      transaction.sign(signers);
-      const checked = await connection.simulateTransaction(transaction);
+      // Recheck the reviewed instructions, then choose the final blockhash only
+      // after submit() finishes its mainnet check and just before wallet approval.
+      const checked = await connection.simulateTransaction(transaction, { replaceRecentBlockhash: true, commitment: 'confirmed' });
       if (checked.value.err) throw new Error(`Pump transaction simulation failed: ${JSON.stringify(checked.value.err)}. No transaction was submitted.`);
       if (wallet()?.toBase58() !== owner || Date.now() > expires || used) throw new Error('Pump review changed or expired. Prepare again.');
+      prepareForSigning = async () => {
+        if (wallet()?.toBase58() !== owner) throw new Error('Wallet changed. Prepare again.');
+        const fresh = await connection.getLatestBlockhash('confirmed');
+        const next = new VersionedTransaction(new TransactionMessage({ payerKey: new PublicKey(owner), recentBlockhash: fresh.blockhash, instructions: reviewed }).compileToV0Message());
+        next.sign(signers);
+        validateLocalInstructions(next, reviewed, owner, signers.map(signer => signer.publicKey.toBase58()));
+        return { transaction: next, blockhash: fresh.blockhash, lastValidBlockHeight: fresh.lastValidBlockHeight };
+      };
     }
     validateLocalInstructions(transaction, reviewed, owner, signers.map(signer => signer.publicKey.toBase58()));
     used = true;
-    return submit(transaction, { ...record, blockhash: transaction.message.recentBlockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight }, onSubmitted);
+    return submit(transaction, { ...record, blockhash: transaction.message.recentBlockhash, lastValidBlockHeight: blockhash.lastValidBlockHeight, ...(prepareForSigning ? { prepareForSigning } : {}) }, onSubmitted);
   } };
 }
 
