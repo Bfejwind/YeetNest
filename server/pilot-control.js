@@ -25,6 +25,10 @@ export function createPilotControl(databaseUrl) {
     },
     fetch: (fetcher, interval = 500, signal) => async (url, options) => {
       const scope = createHash('sha256').update(String(url)).digest('hex');
+      // Signed submissions compete more promptly for the same shared quota slot.
+      // The interval and provider cooldown remain unchanged for all requests.
+      let submission = false;
+      try { submission = JSON.parse(options?.body || '{}').method === 'sendTransaction'; } catch { /* Ordinary fetch. */ }
       const deadline = Date.now() + 60000;
       while (true) {
         if (signal?.aborted) throw signal.reason;
@@ -33,7 +37,7 @@ export function createPilotControl(databaseUrl) {
         const slot = await pool.query('UPDATE rpc_budgets SET next_at=$2::bigint+$3::bigint WHERE scope=$1 AND next_at<=$2::bigint AND cooldown_until<=$2::bigint RETURNING scope', [scope, time, interval]);
         if (slot.rowCount) break;
         if (time > deadline) throw Object.assign(new Error('Shared RPC budget busy'), { code: 'RPC_RATE_LIMIT' });
-        await sleep(interval, undefined, { signal });
+        await sleep(submission ? Math.min(interval,50) : interval, undefined, { signal });
       }
       const response = await fetcher(url, options);
       if (response.status === 429) {

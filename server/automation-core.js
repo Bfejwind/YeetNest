@@ -160,9 +160,21 @@ export async function runAutomationDay({ store, connection, root, pump, metadata
     delete journal.allowanceIncrease;
     await store.save(day.date,journal);
   }
-  for (const increase of journal.allowanceIncreases || []) {
+  for (let index=0;index<(journal.allowanceIncreases || []).length;index++) {
+    const increase=journal.allowanceIncreases[index];
     await reconcile(connection,increase,{resend:currentDay()});
     await store.save(day.date,journal);
+    if (increase.state === 'expired') {
+      if (await connection.getBlockHeight('finalized') <= increase.lastValidBlockHeight) return 'pending';
+      const status=(await connection.getSignatureStatuses([increase.signature],{searchTransactionHistory:true})).value[0];
+      const transaction=await connection.getTransaction(increase.signature,{commitment:'finalized',maxSupportedTransactionVersion:0});
+      if (status || transaction) throw stop('EXPIRED_FUNDING_REQUIRES_RECONCILIATION');
+      (journal.expiredFundingAttempts ||= []).push(increase);
+      journal.allowanceIncreases.splice(index--,1);
+      journal.budgetIncreasePending=true;
+      await store.save(day.date,journal);
+      continue;
+    }
     if (increase.state !== 'confirmed') return ['failed','expired'].includes(increase.state) ? 'funding-stopped' : 'pending';
   }
   if (journal.budgetIncreasePending) {

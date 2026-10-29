@@ -180,3 +180,16 @@ test('0.02 journal upgrade counts its earlier 0.01 funding increase and never du
  const records=[journal.funding,...journal.allowanceIncreases];assert.ok(records.reduce((sum,row)=>sum+row.allowance+row.fee,0)<=DAILY_CAP);
  const sends=f.sends.length;await runAutomationDay(f);assert.equal(f.sends.length,sends);
 });
+
+
+test('expired funding is archived and replaced only after finalized absence, without duplicate allowance',async()=>{
+ const f=fixture();f.balances.set(f.payer.publicKey.toBase58(),9_900_000);f.connection.getBlockHeight=async()=>200;f.connection.getLatestBlockhash=async()=>({blockhash:Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:300});
+ f.records.set('2026-10-27',{day:'2026-10-27',wallet:f.root.publicKey.toBase58(),payer:f.payer.publicKey.toBase58(),cap:DAILY_CAP,funding:{state:'confirmed',allowance:9_900_000,fee:5000},allowanceIncreases:[{state:'expired',signature:'expired-funding',allowance:20_000_000,fee:5000,lastValidBlockHeight:100}],slots:[]});
+ let state;for(let i=0;i<9;i++)state=await runAutomationDay(f);assert.equal(state,'done');const j=f.records.get('2026-10-27');assert.equal(j.expiredFundingAttempts.length,1);assert.equal(j.allowanceIncreases.length,1);assert.equal(j.allowanceIncreases[0].allowance,20_000_000);assert.equal(f.sends.length,6);
+});
+
+test('expired funding with a historical transaction is never replaced',async()=>{
+ const f=fixture();f.connection.getBlockHeight=async()=>200;f.connection.getTransaction=async()=>({meta:{err:null}});
+ f.records.set('2026-10-27',{day:'2026-10-27',wallet:f.root.publicKey.toBase58(),payer:f.payer.publicKey.toBase58(),cap:DAILY_CAP,funding:{state:'confirmed',allowance:9_900_000,fee:5000},allowanceIncreases:[{state:'expired',signature:'landed-funding',allowance:20_000_000,fee:5000,lastValidBlockHeight:100}],slots:[]});
+ await assert.rejects(runAutomationDay(f),/EXPIRED_FUNDING_REQUIRES_RECONCILIATION/);assert.equal(f.sends.length,0);
+});
