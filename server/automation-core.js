@@ -70,7 +70,7 @@ export async function buildAllowanceIncrease(connection, root, payer, journal) {
   transaction.message.recentBlockhash = fresh.blockhash; transaction.sign([root]);
   return pack(transaction,fresh,{allowance,fee});
 }
-export async function buildCreation(connection, pump, payer, creator, metadata, remaining) {
+export async function buildCreation(connection, pump, payer, creator, metadata, remaining, { refundRemainder = false } = {}) {
   const mint = Keypair.generate();
   const globalAccount = await connection.getAccountInfo(pump.GLOBAL_PDA, 'confirmed');
   if (!globalAccount?.owner.equals(pump.PUMP_PROGRAM_ID)) throw stop('INVALID_PUMP_GLOBAL');
@@ -80,24 +80,44 @@ export async function buildCreation(connection, pump, payer, creator, metadata, 
   const creation = await pump.PUMP_SDK.createV2Instruction({ mint: mint.publicKey, name: metadata.name, symbol: metadata.ticker, uri: metadata.uri, creator, user: payer.publicKey, mayhemMode: false, cashback: false, holderReward: false });
   const definition = pump.pumpIdl.instructions.find(ix => ix.name.replaceAll('_', '').toLowerCase() === 'createv2');
   if (!definition || !creation.programId.equals(pump.PUMP_PROGRAM_ID) || !creation.data.subarray(0, 8).equals(Buffer.from(definition.discriminator))) throw stop('ONLY_PUMP_CREATE_V2_ALLOWED');
-  const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }), creation];
+  let instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: 400000 }), ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 50000 }), creation];
   const validity = await connection.getLatestBlockhash('confirmed');
-  const transaction = new VersionedTransaction(new TransactionMessage({ payerKey: payer.publicKey, recentBlockhash: validity.blockhash, instructions }).compileToV0Message());
+  let transaction = new VersionedTransaction(new TransactionMessage({ payerKey: payer.publicKey, recentBlockhash: validity.blockhash, instructions }).compileToV0Message());
   validateLocalInstructions(transaction, instructions, payer.publicKey.toBase58(), [mint.publicKey.toBase58()]);
   const fee = (await connection.getFeeForMessage(transaction.message, 'confirmed')).value;
   if (!Number.isSafeInteger(fee) || fee < 0 || fee > remaining) throw stop('CREATION_FEE_EXCEEDS_BUDGET');
   const before = await connection.getBalance(payer.publicKey, 'confirmed');
   transaction.sign([payer, mint]);
-  const result = await connection.simulateTransaction(transaction, { sigVerify: true, commitment: 'confirmed', accounts: { addresses: [payer.publicKey.toBase58()], encoding: 'base64' } });
+  const simulationOptions = { sigVerify: true, commitment: 'confirmed', accounts: { addresses: [payer.publicKey.toBase58()], encoding: 'base64' } };
+  let result = await connection.simulateTransaction(transaction, simulationOptions);
+  let refund = 0;
+  if (refundRemainder && result.value.err?.InsufficientFundsForRent?.account_index === 0 && !creator.equals(payer.publicKey)) {
+    // An unsigned, non-broadcastable probe temporarily adds headroom in simulation
+    // to measure creation cost. That transfer NEVER appears in the signed launch.
+    const headroom = 1_000_000;
+    const probe = new VersionedTransaction(new TransactionMessage({payerKey:payer.publicKey,recentBlockhash:validity.blockhash,instructions:[SystemProgram.transfer({fromPubkey:creator,toPubkey:payer.publicKey,lamports:headroom}),...instructions]}).compileToV0Message());
+    const probeFee = (await connection.getFeeForMessage(probe.message,'confirmed')).value;
+    const measured = await connection.simulateTransaction(probe,{...simulationOptions,sigVerify:false,replaceRecentBlockhash:true});
+    if (measured.value.err || !Number.isSafeInteger(probeFee) || probeFee < fee) throw stop('CREATION_COST_UNAVAILABLE');
+    refund = measured.value.accounts?.[0]?.lamports - headroom + probeFee - fee;
+    if (!Number.isSafeInteger(refund) || refund <= 0 || refund >= before) throw stop('DAILY_CREATION_BUDGET_EXHAUSTED');
+    instructions = [...instructions,SystemProgram.transfer({fromPubkey:payer.publicKey,toPubkey:creator,lamports:refund})];
+    transaction = new VersionedTransaction(new TransactionMessage({payerKey:payer.publicKey,recentBlockhash:validity.blockhash,instructions}).compileToV0Message());
+    validateLocalInstructions(transaction,instructions,payer.publicKey.toBase58(),[mint.publicKey.toBase58()]);
+    if ((await connection.getFeeForMessage(transaction.message,'confirmed')).value !== fee) throw stop('CREATION_COST_UNAVAILABLE');
+    transaction.sign([payer,mint]);
+    result = await connection.simulateTransaction(transaction,simulationOptions);
+  }
   if (result.value.err) throw stop('CREATION_SIMULATION_FAILED_OR_INSUFFICIENT_BUDGET');
   const after = result.value.accounts?.[0]?.lamports;
-  if (!Number.isSafeInteger(after) || !Number.isSafeInteger(before) || after < 0 || after > before) throw stop('CREATION_COST_UNAVAILABLE');
-  // Conservatively reserve the simulated full debit plus another network fee and a small margin.
-  const reserve = before - after + fee + 20000;
-  if (reserve > remaining || reserve > before) throw stop('DAILY_CREATION_BUDGET_EXHAUSTED');
+  if (!Number.isSafeInteger(after) || !Number.isSafeInteger(before) || after < 0 || after > before || (refund && after !== 0)) throw stop('CREATION_COST_UNAVAILABLE');
+  // Refunds return unused funds to the configured creator; only creation debits
+  // are reserved. Total funding and all funding fees remain bounded separately.
+  const reserve = before - after - refund + fee + 20000;
+  if (!Number.isSafeInteger(reserve) || reserve < fee || reserve > remaining || reserve > before) throw stop('DAILY_CREATION_BUDGET_EXHAUSTED');
   const fresh = await connection.getLatestBlockhash('confirmed');
   transaction.message.recentBlockhash = fresh.blockhash; transaction.sign([payer,mint]);
-  return pack(transaction, fresh, { reserve, mint: mint.publicKey.toBase58(), poolId: pump.bondingCurvePda(mint.publicKey).toBase58(), metadata });
+  return pack(transaction, fresh, { reserve, refundLamports: refund, mint: mint.publicKey.toBase58(), poolId: pump.bondingCurvePda(mint.publicKey).toBase58(), metadata });
 }
 export async function reconcile(connection, record, { resend = false } = {}) {
   if (['confirmed', 'failed', 'expired'].includes(record.state)) return;
@@ -141,6 +161,11 @@ export async function runAutomationDay({ store, connection, root, pump, metadata
   }
   if (journal.cap !== DAILY_CAP) throw stop('JOURNAL_WALLET_OR_POLICY_MISMATCH');
   if (journal.blocked?.reason === 'DAILY_CREATION_BUDGET_EXHAUSTED' && journal.slots.some(row=>row?.state === 'expired')) {
+    delete journal.blocked;
+    await store.save(day.date,journal);
+  }
+  if (journal.blocked?.slot === DAILY_LAUNCH_COUNT - 1 && journal.blocked.reason === 'CREATION_SIMULATION_FAILED_OR_INSUFFICIENT_BUDGET' && journal.slots.filter(row=>row?.state === 'confirmed').length === DAILY_LAUNCH_COUNT - 1) {
+    (journal.previousBlocks ||= []).push(journal.blocked);
     delete journal.blocked;
     await store.save(day.date,journal);
   }
@@ -208,7 +233,7 @@ export async function runAutomationDay({ store, connection, root, pump, metadata
       if (remaining <= 0) return 'budget-exhausted';
       const template = rotatingTemplate(slot, now());
       const metadata = await metadataFor(template, root.publicKey.toBase58());
-      try { record = await buildCreation(connection, pump, payer, root.publicKey, metadata, remaining); }
+      try { record = await buildCreation(connection, pump, payer, root.publicKey, metadata, remaining, { refundRemainder: slot === DAILY_LAUNCH_COUNT - 1 }); }
       catch (error) {
         if (error.automationCode) { journal.blocked = { slot, reason: error.automationCode }; await store.save(day.date, journal); return 'blocked'; }
         throw error;
