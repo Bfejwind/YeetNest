@@ -16,7 +16,7 @@ export async function buildFeeClaim({connection,root,pump}) {
     const fresh=await record.prepareForSigning();transaction=fresh.transaction;
     if (!(transaction instanceof VersionedTransaction) || transaction.message.header.numRequiredSignatures!==1 || !transaction.message.staticAccountKeys[0].equals(root.publicKey)) throw stop('INVALID_CLAIM_SIGNER');
     const fee=(await connection.getFeeForMessage(transaction.message,'confirmed')).value;
-    const rent=Number(toUnits(built.rentReserve,9)), amount=Number(toUnits(balance.amount,9));
+    const rent=built.rentReserve === '0' ? 0 : Number(toUnits(built.rentReserve,9)), amount=Number(toUnits(balance.amount,9));
     if (!Number.isSafeInteger(fee)||fee<0||fee>MAX_CLAIM_FEE) throw stop('CLAIM_FEE_EXCEEDS_CAP');
     if (!Number.isSafeInteger(rent)||!Number.isSafeInteger(amount)||amount<=fee+rent) return {state:'skipped',reason:'below-fee-cost'};
     transaction.sign([root]);
