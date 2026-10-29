@@ -126,6 +126,10 @@ export async function runAutomationDay({ store, connection, root, pump, metadata
     await store.save(day.date,journal);
   }
   if (journal.cap !== DAILY_CAP) throw stop('JOURNAL_WALLET_OR_POLICY_MISMATCH');
+  if (journal.blocked?.reason === 'DAILY_CREATION_BUDGET_EXHAUSTED' && journal.slots.some(row=>row?.state === 'expired')) {
+    delete journal.blocked;
+    await store.save(day.date,journal);
+  }
   if (journal.blocked) return 'blocked';
   const currentDay = () => singaporeDay(now()).date === day.date && singaporeDay(now()).due;
   if (!currentDay()) return 'date-ended';
@@ -179,6 +183,8 @@ export async function runAutomationDay({ store, connection, root, pump, metadata
     }
     await reconcile(connection, record, { resend: currentDay() });
     await store.save(day.date, journal);
+    // Recover an expired slot before reserving budget for any later slot.
+    if (record.state === 'expired') return 'pending';
     if (!['confirmed','failed','expired'].includes(record.state)) return 'pending';
     if (record.state === 'confirmed' && !record.registered) {
       await register(record, root.publicKey.toBase58());

@@ -150,3 +150,10 @@ test('allowance increase preserves rent when source cannot provide the full delt
  await runAutomationDay(f);const record=f.records.get('2026-10-27').allowanceIncrease;
  assert.equal(record.allowance,9_349_760);assert.ok(record.allowance+record.fee+650240<=10_095_000);
 });
+
+
+test('expired slot releases its old reservation before continuing a budget-blocked day',async()=>{
+ const f=fixture();f.connection.getBlockHeight=async()=>200;f.connection.getLatestBlockhash=async()=>({blockhash:Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:300});f.connection.getAccountInfo=async key=>key.equals(sdk.GLOBAL_PDA)?{owner:sdk.PUMP_PROGRAM_ID}:null;f.balances.set(f.payer.publicKey.toBase58(),DAILY_ALLOWANCE);
+ f.records.set('2026-10-27',{day:'2026-10-27',wallet:f.root.publicKey.toBase58(),payer:f.payer.publicKey.toBase58(),cap:DAILY_CAP,funding:{state:'confirmed'},blocked:{slot:1,reason:'DAILY_CREATION_BUDGET_EXHAUSTED'},slots:[{state:'expired',signature:'expired',mint:Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:100,reserve:DAILY_ALLOWANCE}]});
+ let state;for(let i=0;i<8;i++)state=await runAutomationDay(f);assert.equal(state,'done');assert.equal(f.registered.length,5);assert.equal(f.records.get('2026-10-27').expiredAttempts.length,1);
+});
