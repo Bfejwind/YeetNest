@@ -1,3 +1,4 @@
+import { startFeeClaimScheduler } from './automation-claim-scheduler.js';
 import express from 'express';
 import { createApi } from './api.js';
 import { access, mkdir } from 'node:fs/promises';
@@ -34,9 +35,11 @@ app.use(express.static('dist'));
 const server = app.listen(port, '0.0.0.0', () => {
   console.log(`MemePop is running at http://localhost:${port}`);
 });
+const stopFeeClaimScheduler = startFeeClaimScheduler();
 function shutdown() {
   if (stopping) return;
   stopping = true;
+  stopFeeClaimScheduler();
   api.locals.stopStreams();
   server.close(async error => {
     try { await api.locals.close(); process.exitCode = error ? 1 : 0; }

@@ -16,9 +16,11 @@ export function installAutomationControl(app, { config, auth, route, fail }) {
     try {
       await store.ready();
       const record = await store.get(day.date);
+      const claim = config.AUTOCLAIM_ENABLED === 'true' ? await store.claimGet(day.date,config.AUTOLAUNCH_WALLET) : null;
+      const creatorFeeClaim = { enabled: config.AUTOCLAIM_ENABLED === 'true', schedule: '09:00 Asia/Singapore', state: claim?.state || 'not-run', signature: claim?.signature };
       const confirmed = record?.slots.filter(s => s?.state === 'confirmed').length || 0;
       const complete = record?.slots.length === DAILY_LAUNCH_COUNT && record.slots.every(s => s?.state === 'confirmed' && s.registered);
-      return { day: day.date, dailyCapSol: String(DAILY_CAP / 1_000_000_000), due: day.due, recorded: !!record, confirmed, complete, blocked: ([10_000_000,20_000_000].includes(record?.cap) && ['DAILY_CREATION_BUDGET_EXHAUSTED','CREATION_SIMULATION_FAILED_OR_INSUFFICIENT_BUDGET'].includes(record?.blocked?.reason)) || (record?.blocked?.reason === 'DAILY_CREATION_BUDGET_EXHAUSTED' && record.slots.some(row=>row?.state === 'expired')) ? null : record?.blocked?.reason || null, fundingState: record?.funding?.state || 'not-funded', running: !!worker, lastExit, restartConfigured: configured() && operators.length > 0 };
+      return { day: day.date, creatorFeeClaim, dailyCapSol: String(DAILY_CAP / 1_000_000_000), due: day.due, recorded: !!record, confirmed, complete, blocked: ([10_000_000,20_000_000].includes(record?.cap) && ['DAILY_CREATION_BUDGET_EXHAUSTED','CREATION_SIMULATION_FAILED_OR_INSUFFICIENT_BUDGET'].includes(record?.blocked?.reason)) || (record?.blocked?.reason === 'DAILY_CREATION_BUDGET_EXHAUSTED' && record.slots.some(row=>row?.state === 'expired')) ? null : record?.blocked?.reason || null, fundingState: record?.funding?.state || 'not-funded', running: !!worker, lastExit, restartConfigured: configured() && operators.length > 0 };
     } finally { await store.close(); }
   };
   app.get('/api/automation/status', route(async (req, res) => {

@@ -45,6 +45,7 @@ export function mountSchedule({ launch, esc, toast, render, connect, automationA
       try {
         const result = await automationApi('/automation/status');
         status.textContent = result.day + ': ' + result.confirmed + '/5 confirmed. ' + (result.complete ? 'Completed.' : result.blocked ? 'Blocked: ' + result.blocked : result.running ? 'Worker running.' : result.recorded ? 'Run recorded; refresh for progress.' : 'No run recorded today.') + (!result.due ? ' Scheduled from 9:15 a.m. Singapore time.' : '') + (!result.restartConfigured ? ' Restart requires server worker credentials and an operator wallet configuration.' : '');
+        if (result.creatorFeeClaim?.enabled) status.textContent += ' Daily creator-fee claim (9:00 a.m. Singapore): ' + result.creatorFeeClaim.state + '.';
         restart.disabled = !result.restartConfigured || !result.due || result.complete || result.running || !!result.blocked;
       } catch (error) { status.textContent = error.message; }
     };
