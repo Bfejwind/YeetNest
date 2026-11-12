@@ -1,0 +1,16 @@
+{
+  "id": "/",
+  "name": "MemePop",
+  "short_name": "MemePop",
+  "description": "MemePop is a Solana meme coin launchpad for creating and discovering tokens, exploring market charts, tracking watchlists, and trading with a connected wallet.",
+  "lang": "en",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#111216",
+  "theme_color": "#111216",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}
